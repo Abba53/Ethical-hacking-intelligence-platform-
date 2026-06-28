@@ -16,6 +16,7 @@ import time
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
+from collectors.rss_collector import collect_all_feeds
 
 # Configure basic logging so we can see what the bot is doing as it runs.
 logging.basicConfig(
@@ -67,6 +68,35 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         f"Uptime: {hours}h {minutes}m {seconds}s"
     )
 
+async def feeds_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles the /feeds command — triggers a live RSS collection run."""
+    user = update.effective_user
+    logger.info("Received /feeds from user_id=%s", user.id)
+
+    await update.message.reply_text("🔄 Collecting feeds, please wait...")
+
+    entries = await collect_all_feeds()
+
+    if not entries:
+        await update.message.reply_text(
+            "⚠️ No entries were collected. Check logs for feed errors."
+        )
+        return
+
+    # Count entries per source for the summary.
+    counts: dict[str, int] = {}
+    for entry in entries:
+        counts[entry["source_url"]] = counts.get(entry["source_url"], 0) + 1
+
+    summary_lines = [f"✅ Collected {len(entries)} total entries:\n"]
+    for source_url, count in counts.items():
+        summary_lines.append(f"• {source_url} — {count} entries")
+
+    summary_lines.append("\n📰 Most recent headlines:")
+    for entry in entries[:5]:
+        summary_lines.append(f"- {entry['title']}")
+
+    await update.message.reply_text("\n".join(summary_lines))
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
@@ -98,6 +128,7 @@ def main() -> None:
 
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("status", status_command))
+    application.add_handler(CommandHandler("feeds", feeds_command))
     application.add_error_handler(error_handler)
 
     logger.info("Bot is starting polling...")
