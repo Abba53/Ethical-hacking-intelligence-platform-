@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from collectors.rss_collector import collect_all_feeds
+from collectors.threat_feed_collector import collect_threat_feeds
 
 # Configure basic logging so we can see what the bot is doing as it runs.
 logging.basicConfig(
@@ -98,6 +99,34 @@ async def feeds_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     await update.message.reply_text("\n".join(summary_lines))
 
+async def threats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles the /threats command — fetches structured threat intel (Phase 6.5)."""
+    user = update.effective_user
+    logger.info("Received /threats from user_id=%s", user.id)
+
+    await update.message.reply_text("🔄 Fetching threat intelligence, please wait...")
+
+    results = await collect_threat_feeds()
+    threatfox_iocs = results["threatfox"]
+    chainabuse_reports = results["chainabuse"]
+
+    summary_lines = [
+        f"✅ ThreatFox: {len(threatfox_iocs)} IOCs (last 24h)\n",
+    ]
+
+    if threatfox_iocs:
+        summary_lines.append("Recent IOCs:")
+        for ioc in threatfox_iocs[:5]:
+            summary_lines.append(
+                f"- [{ioc['ioc_type']}] {ioc['ioc']} ({ioc['malware']})"
+            )
+
+    summary_lines.append(
+        f"\n✅ Chainabuse test screening: {len(chainabuse_reports)} report(s) found"
+    )
+
+    await update.message.reply_text("\n".join(summary_lines))
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Global error handler. PTB calls this automatically whenever any
@@ -129,6 +158,7 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("feeds", feeds_command))
+    application.add_handler(CommandHandler("threats", threats_command))
     application.add_error_handler(error_handler)
 
     logger.info("Bot is starting polling...")
