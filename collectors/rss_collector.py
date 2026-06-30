@@ -20,6 +20,11 @@ from typing import Optional
 import feedparser
 import httpx
 
+from sqlalchemy.exc import IntegrityError
+
+from database.db import get_session
+from database.models import RSSEntry
+
 logger = logging.getLogger(__name__)
 
 # Verified, live CTI RSS feed sources (Phase 5.1).
@@ -99,6 +104,46 @@ def parse_feed_content(raw_content: bytes, source_url: str) -> list[dict]:
 
     return entries
 
+def save_entries_to_db(entries: list[dict]) -> dict:
+    """
+    Saves a list of parsed RSS entries to the database.
+
+    Skips entries whose 'link' already exists (deduplication via the
+    database's UNIQUE constraint). Returns a summary count.
+    """
+    inserted = 0
+    skipped = 0
+
+    with get_session() as session:
+        for entry in entries:
+            existing = (
+                session.query(RSSEntry)
+                .filter_by(link=entry["link"])
+                .first()
+            )
+            if existing:
+                skipped += 1
+                continue
+
+            db_entry = RSSEntry(
+                source_url=entry["source_url"],
+                title=entry["title"],
+                link=entry["link"],
+                published=entry["published"],
+                summary=entry["summary"],
+            )
+            session.add(db_entry)
+
+            try:
+                session.commit()
+                inserted += 1
+            except IntegrityError:
+                # Safety net: in case of a race with the pre-check above.
+                session.rollback()
+                skipped += 1
+
+    logger.info("Saved %d new RSS entries (%d duplicates skipped)", inserted, skipped)
+    return {"inserted": inserted, "skipped": skipped}
 
 async def collect_all_feeds() -> list[dict]:
     """
@@ -131,7 +176,11 @@ if __name__ == "__main__":
     )
 
     results = asyncio.run(collect_all_feeds())
+    print(f"\nTotal entries collected from feeds: {len(results)}")
 
-    print(f"\nTotal entries collected: {len(results)}\n")
+    save_summary = save_entries_to_db(results)
+    print(f"Database: {save_summary['inserted']} new, "
+          f"{save_summary['skipped']} duplicates skipped\n")
+
     for item in results[:5]:
         print(f"- [{item['source_url']}] {item['title']}")
