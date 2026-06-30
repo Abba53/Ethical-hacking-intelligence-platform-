@@ -19,6 +19,11 @@ import os
 import httpx
 from dotenv import load_dotenv
 
+from sqlalchemy.exc import IntegrityError
+
+from database.db import get_session
+from database.models import ChainabuseReport, ThreatFoxIOC
+
 logger = logging.getLogger(__name__)
 
 load_dotenv()
@@ -146,6 +151,95 @@ async def fetch_chainabuse_report(
     )
     return parsed_reports
 
+def save_threatfox_to_db(iocs: list[dict]) -> dict:
+    """
+    Saves ThreatFox IOCs to the database.
+
+    Skips IOCs whose 'ioc' value already exists (deduplication via
+    the database's UNIQUE constraint). Returns a summary count.
+    """
+    inserted = 0
+    skipped = 0
+
+    with get_session() as session:
+        for item in iocs:
+            existing = (
+                session.query(ThreatFoxIOC)
+                .filter_by(ioc=item["ioc"])
+                .first()
+            )
+            if existing:
+                skipped += 1
+                continue
+
+            db_ioc = ThreatFoxIOC(
+                ioc=item["ioc"],
+                ioc_type=item["ioc_type"],
+                threat_type=item["threat_type"],
+                malware=item["malware"],
+                confidence_level=item["confidence_level"],
+                first_seen=item["first_seen"],
+            )
+            session.add(db_ioc)
+
+            try:
+                session.commit()
+                inserted += 1
+            except IntegrityError:
+                session.rollback()
+                skipped += 1
+
+    logger.info(
+        "Saved %d new ThreatFox IOCs (%d duplicates skipped)", inserted, skipped
+    )
+    return {"inserted": inserted, "skipped": skipped}
+
+
+def save_chainabuse_to_db(reports: list[dict]) -> dict:
+    """
+    Saves Chainabuse reports to the database.
+
+    Skips reports whose (address, category, reported_at) combination
+    already exists. Returns a summary count.
+    """
+    inserted = 0
+    skipped = 0
+
+    with get_session() as session:
+        for item in reports:
+            existing = (
+                session.query(ChainabuseReport)
+                .filter_by(
+                    address=item["address"],
+                    category=item["category"],
+                    reported_at=item["reported_at"],
+                )
+                .first()
+            )
+            if existing:
+                skipped += 1
+                continue
+
+            db_report = ChainabuseReport(
+                address=item["address"],
+                category=item["category"],
+                chain=item["chain"],
+                description=item["description"],
+                reported_at=item["reported_at"],
+            )
+            session.add(db_report)
+
+            try:
+                session.commit()
+                inserted += 1
+            except IntegrityError:
+                session.rollback()
+                skipped += 1
+
+    logger.info(
+        "Saved %d new Chainabuse reports (%d duplicates skipped)", inserted, skipped
+    )
+    return {"inserted": inserted, "skipped": skipped}
 
 async def collect_threat_feeds() -> dict:
     """
@@ -182,10 +276,16 @@ if __name__ == "__main__":
 
     results = asyncio.run(collect_threat_feeds())
 
-    print(f"\nThreatFox IOCs: {len(results['threatfox'])}")
+    tf_summary = save_threatfox_to_db(results["threatfox"])
+    ca_summary = save_chainabuse_to_db(results["chainabuse"])
+
+    print(f"\nThreatFox IOCs: {len(results['threatfox'])} fetched, "
+          f"{tf_summary['inserted']} new, {tf_summary['skipped']} duplicates")
+
     for ioc in results["threatfox"][:5]:
         print(f"- [{ioc['ioc_type']}] {ioc['ioc']} ({ioc['malware']})")
 
-    print(f"\nChainabuse reports for test address: {len(results['chainabuse'])}")
+    print(f"Chainabuse reports for test address: {len(results['chainabuse'])} fetched, "
+          f"{ca_summary['inserted']} new, {ca_summary['skipped']} duplicates")
     for report in results["chainabuse"][:5]:
         print(f"- [{report['category']}] {report['description'][:80]}")
