@@ -18,7 +18,8 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from collectors.rss_collector import collect_all_feeds
 from collectors.threat_feed_collector import collect_threat_feeds
-
+from collectors.rss_collector import collect_all_feeds, save_entries_to_db
+from collectors.threat_feed_collector import collect_threat_feeds, save_threatfox_to_db, save_chainabuse_to_db
 # Configure basic logging so we can see what the bot is doing as it runs.
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -70,7 +71,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
 
 async def feeds_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles the /feeds command — triggers a live RSS collection run."""
+    """Handles /feeds — collects RSS feeds and saves new entries to database."""
     user = update.effective_user
     logger.info("Received /feeds from user_id=%s", user.id)
 
@@ -80,52 +81,61 @@ async def feeds_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     if not entries:
         await update.message.reply_text(
-            "⚠️ No entries were collected. Check logs for feed errors."
+            "⚠️ No entries collected. Check logs for feed errors."
         )
         return
 
-    # Count entries per source for the summary.
+    summary = save_entries_to_db(entries)
+
     counts: dict[str, int] = {}
     for entry in entries:
         counts[entry["source_url"]] = counts.get(entry["source_url"], 0) + 1
 
-    summary_lines = [f"✅ Collected {len(entries)} total entries:\n"]
+    lines = [
+        f"✅ Feeds collected: {len(entries)} total entries\n"
+        f"💾 New to database: {summary['inserted']} | "
+        f"Already seen: {summary['skipped']}\n"
+    ]
+
     for source_url, count in counts.items():
-        summary_lines.append(f"• {source_url} — {count} entries")
+        lines.append(f"• {source_url} — {count} entries")
 
-    summary_lines.append("\n📰 Most recent headlines:")
-    for entry in entries[:5]:
-        summary_lines.append(f"- {entry['title']}")
+    if summary["inserted"] > 0:
+        lines.append("\n📰 Recent new headlines:")
+        new_entries = [e for e in entries if e["link"] not in []]
+        for entry in entries[:3]:
+            lines.append(f"- {entry['title']}")
 
-    await update.message.reply_text("\n".join(summary_lines))
+    await update.message.reply_text("\n".join(lines))
 
 async def threats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles the /threats command — fetches structured threat intel (Phase 6.5)."""
+    """Handles /threats — fetches threat intel and saves to database."""
     user = update.effective_user
     logger.info("Received /threats from user_id=%s", user.id)
 
     await update.message.reply_text("🔄 Fetching threat intelligence, please wait...")
 
     results = await collect_threat_feeds()
-    threatfox_iocs = results["threatfox"]
-    chainabuse_reports = results["chainabuse"]
+    tf_summary = save_threatfox_to_db(results["threatfox"])
+    ca_summary = save_chainabuse_to_db(results["chainabuse"])
 
-    summary_lines = [
-        f"✅ ThreatFox: {len(threatfox_iocs)} IOCs (last 24h)\n",
+    lines = [
+        f"✅ ThreatFox: {len(results['threatfox'])} IOCs fetched\n"
+        f"💾 New: {tf_summary['inserted']} | "
+        f"Already seen: {tf_summary['skipped']}\n"
     ]
 
-    if threatfox_iocs:
-        summary_lines.append("Recent IOCs:")
-        for ioc in threatfox_iocs[:5]:
-            summary_lines.append(
-                f"- [{ioc['ioc_type']}] {ioc['ioc']} ({ioc['malware']})"
-            )
+    if results["threatfox"]:
+        lines.append("Recent IOCs:")
+        for ioc in results["threatfox"][:5]:
+            lines.append(f"- [{ioc['ioc_type']}] {ioc['ioc']} ({ioc['malware']})")
 
-    summary_lines.append(
-        f"\n✅ Chainabuse test screening: {len(chainabuse_reports)} report(s) found"
+    lines.append(
+        f"\n✅ Chainabuse: {len(results['chainabuse'])} report(s) | "
+        f"New: {ca_summary['inserted']}"
     )
 
-    await update.message.reply_text("\n".join(summary_lines))
+    await update.message.reply_text("\n".join(lines))
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
