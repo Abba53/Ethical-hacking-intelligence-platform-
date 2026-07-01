@@ -25,6 +25,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from sqlalchemy import ForeignKey, Text
 
 class Base(DeclarativeBase):
     """Base class that all our table models inherit from."""
@@ -85,6 +86,26 @@ class ChainabuseReport(Base):
     description: Mapped[str] = mapped_column(String(2000), nullable=True)
     reported_at: Mapped[str] = mapped_column(String(200), nullable=True)
     collected_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+class ExtractedIOC(Base):
+    __tablename__ = "extracted_iocs"
+    __table_args__ = (
+        UniqueConstraint(
+            "ioc_type", "value", "source_entry_id",
+            name="uq_extracted_ioc_type_value_source",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ioc_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    value: Mapped[str] = mapped_column(String(1000), nullable=False)
+    source_entry_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("rss_entries.id"), nullable=False
+    )
+    extracted_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    def __repr__(self) -> str:
+        return f"<ExtractedIOC id={self.id} type={self.ioc_type!r} value={self.value!r}>"
 
     def __repr__(self) -> str:
         return f"<ChainabuseReport id={self.id} address={self.address!r}>"
