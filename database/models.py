@@ -87,6 +87,9 @@ class ChainabuseReport(Base):
     reported_at: Mapped[str] = mapped_column(String(200), nullable=True)
     collected_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
+    def __repr__(self) -> str:
+          return f"<ChainabuseReport id={self.id} address={self.address!r}>"
+
 class ExtractedIOC(Base):
     __tablename__ = "extracted_iocs"
     __table_args__ = (
@@ -107,5 +110,3 @@ class ExtractedIOC(Base):
     def __repr__(self) -> str:
         return f"<ExtractedIOC id={self.id} type={self.ioc_type!r} value={self.value!r}>"
 
-    def __repr__(self) -> str:
-        return f"<ChainabuseReport id={self.id} address={self.address!r}>"
