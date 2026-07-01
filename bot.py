@@ -16,8 +16,8 @@ import time
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
-from collectors.rss_collector import collect_all_feeds
-from collectors.threat_feed_collector import collect_threat_feeds
+#from collectors.rss_collector import collect_all_feeds
+#from collectors.threat_feed_collector import collect_threat_feeds
 from collectors.rss_collector import collect_all_feeds, save_entries_to_db
 from collectors.threat_feed_collector import collect_threat_feeds, save_threatfox_to_db, save_chainabuse_to_db
 # Configure basic logging so we can see what the bot is doing as it runs.
