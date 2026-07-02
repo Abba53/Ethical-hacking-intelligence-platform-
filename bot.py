@@ -18,6 +18,8 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from collectors.rss_collector import collect_all_feeds, save_entries_to_db
 from collectors.threat_feed_collector import collect_threat_feeds, save_threatfox_to_db, save_chainabuse_to_db
+from extractors.ioc_extractor import process_rss_entries
+
 # Configure basic logging so we can see what the bot is doing as it runs.
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -135,6 +137,29 @@ async def threats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     await update.message.reply_text("\n".join(lines))
 
+async def extract_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles /extract — runs IOC extraction on unprocessed RSS entries."""
+    user = update.effective_user
+    logger.info("Received /extract from user_id=%s", user.id)
+
+    await update.message.reply_text("🔍 Running IOC extraction on new articles...")
+
+    import asyncio
+    loop = asyncio.get_event_loop()
+    summary = await loop.run_in_executor(None, process_rss_entries, 50)
+
+    lines = [
+        f"✅ IOC Extraction complete\n",
+        f"📄 Articles processed: {summary['entries_processed']}",
+        f"🎯 New IOCs extracted: {summary['extracted']}",
+        f"⏭️ Duplicates skipped: {summary['skipped']}",
+    ]
+
+    if summary["extracted"] == 0 and summary["entries_processed"] == 0:
+        lines.append("\n(No new unprocessed articles — run /feeds first)")
+
+    await update.message.reply_text("\n".join(lines))
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Global error handler. PTB calls this automatically whenever any
@@ -167,6 +192,7 @@ def main() -> None:
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("feeds", feeds_command))
     application.add_handler(CommandHandler("threats", threats_command))
+    application.add_handler(CommandHandler("extract", extract_command))
     application.add_error_handler(error_handler)
 
     logger.info("Bot is starting polling...")
