@@ -19,6 +19,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from collectors.rss_collector import collect_all_feeds, save_entries_to_db
 from collectors.threat_feed_collector import collect_threat_feeds, save_threatfox_to_db, save_chainabuse_to_db
 from extractors.ioc_extractor import process_rss_entries
+from extractors.ioc_lookup import lookup_ioc
 
 # Configure basic logging so we can see what the bot is doing as it runs.
 logging.basicConfig(
@@ -160,6 +161,70 @@ async def extract_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     await update.message.reply_text("\n".join(lines))
 
+async def lookup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles /lookup <value> — universal IOC lookup across local DB and live APIs."""
+    user = update.effective_user
+    logger.info("Received /lookup from user_id=%s", user.id)
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /lookup <ioc_value>\n"
+            "Examples:\n"
+            "  /lookup 192.168.1.1\n"
+            "  /lookup CVE-2026-12345\n"
+            "  /lookup malware.example.com\n"
+            "  /lookup 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
+        )
+        return
+
+    value = " ".join(context.args).strip()
+    await update.message.reply_text(f"🔍 Looking up: {value}")
+
+    result = await lookup_ioc(value)
+    ioc_type = result["ioc_type"]
+    local = result["local"]
+    chainabuse = result["chainabuse"]
+
+    lines = [f"📋 IOC Lookup Results\n"]
+    lines.append(f"Value: {value}")
+    lines.append(f"Type:  {ioc_type}\n")
+
+    # ThreatFox local matches
+    tf_hits = local["threatfox"]
+    if tf_hits:
+        lines.append(f"⚠️ ThreatFox: {len(tf_hits)} match(es)")
+        for hit in tf_hits[:3]:
+            lines.append(
+                f"  • {hit['malware']} | {hit['threat_type']} | "
+                f"confidence: {hit['confidence_level']}%"
+            )
+            lines.append(f"    first seen: {hit['first_seen']}")
+    else:
+        lines.append("✅ ThreatFox: not found in local DB")
+
+    # Extracted IOCs local matches
+    ex_hits = local["extracted"]
+    if ex_hits:
+        lines.append(f"\n⚠️ Found in {len(ex_hits)} collected article(s)")
+        for hit in ex_hits[:3]:
+            lines.append(f"  • entry_id={hit['source_entry_id']} | {hit['extracted_at'][:19]}")
+    else:
+        lines.append("\n✅ Not found in extracted IOCs")
+
+    # Chainabuse (crypto addresses only)
+    if ioc_type in ("eth_address", "sol_address"):
+        if chainabuse:
+            lines.append(f"\n🚨 Chainabuse: {len(chainabuse)} report(s)")
+            for r in chainabuse[:3]:
+                lines.append(f"  • [{r['category']}] {r['description'][:60]}")
+        else:
+            lines.append("\n✅ Chainabuse: no reports found")
+
+    if ioc_type == "unknown":
+        lines.append("\n⚠️ Could not detect IOC type — check the value format.")
+
+    await update.message.reply_text("\n".join(lines))
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Global error handler. PTB calls this automatically whenever any
@@ -193,6 +258,7 @@ def main() -> None:
     application.add_handler(CommandHandler("feeds", feeds_command))
     application.add_handler(CommandHandler("threats", threats_command))
     application.add_handler(CommandHandler("extract", extract_command))
+    application.add_handler(CommandHandler("lookup", lookup_command))
     application.add_error_handler(error_handler)
 
     logger.info("Bot is starting polling...")
