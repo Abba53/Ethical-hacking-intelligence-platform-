@@ -20,6 +20,7 @@ from collectors.rss_collector import collect_all_feeds, save_entries_to_db
 from collectors.threat_feed_collector import collect_threat_feeds, save_threatfox_to_db, save_chainabuse_to_db
 from extractors.ioc_extractor import process_rss_entries
 from extractors.ioc_lookup import lookup_ioc
+from tools.blockchain_forensics import investigate_wallet
 
 # Configure basic logging so we can see what the bot is doing as it runs.
 logging.basicConfig(
@@ -225,6 +226,72 @@ async def lookup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     await update.message.reply_text("\n".join(lines))
 
+async def walletinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles /walletinfo <address> — blockchain forensics for EVM and Solana."""
+    user = update.effective_user
+    logger.info("Received /walletinfo from user_id=%s", user.id)
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /walletinfo <wallet_address>\n"
+            "Examples:\n"
+            "  /walletinfo 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045\n"
+            "  /walletinfo GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ"
+        )
+        return
+
+    address = " ".join(context.args).strip()
+    await update.message.reply_text(f"🔍 Investigating wallet: {address[:20]}...")
+
+    result = await investigate_wallet(address)
+
+    if "error" in result:
+        error = result["error"]
+        if error == "unsupported_type":
+            await update.message.reply_text(
+                f"⚠️ {result['message']}"
+            )
+        elif error == "no_api_key":
+            await update.message.reply_text(
+                "⚠️ Helius API key not configured. Check .env file."
+            )
+        elif error == "timeout":
+            await update.message.reply_text(
+                "⚠️ Request timed out. Try again in a moment."
+            )
+        else:
+            await update.message.reply_text(
+                f"⚠️ Lookup failed: {error}"
+            )
+        return
+
+    chain = result.get("chain", "unknown")
+    lines = [f"🔗 Wallet Forensics ({chain.upper()})\n"]
+    lines.append(f"Address: {address[:20]}...{address[-6:]}\n")
+
+    if chain == "ethereum":
+        lines.append(f"💰 ETH Balance: {result['eth_balance']:.6f} ETH")
+        lines.append(f"🪙 Token Holdings: {result['token_count']}")
+        if result["tokens"]:
+            lines.append("\nTop tokens:")
+            for token in result["tokens"][:3]:
+                lines.append(f"  • {token['name']} ({token['symbol']})")
+
+    elif chain == "solana":
+        lines.append(f"📊 Recent transactions: {result['tx_count_returned']}")
+        txs = result.get("recent_transactions", [])
+        if txs:
+            lines.append("\nRecent activity:")
+            for tx in txs[:5]:
+                tx_type = tx["type"]
+                desc = tx["description"]
+                if desc:
+                    lines.append(f"  • {tx_type}: {desc[:50]}")
+                else:
+                    lines.append(f"  • {tx_type}")
+
+    await update.message.reply_text("\n".join(lines))
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Global error handler. PTB calls this automatically whenever any
@@ -259,6 +326,7 @@ def main() -> None:
     application.add_handler(CommandHandler("threats", threats_command))
     application.add_handler(CommandHandler("extract", extract_command))
     application.add_handler(CommandHandler("lookup", lookup_command))
+    application.add_handler(CommandHandler("walletinfo", walletinfo_command))
     application.add_error_handler(error_handler)
 
     logger.info("Bot is starting polling...")
