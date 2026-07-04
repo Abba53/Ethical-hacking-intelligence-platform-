@@ -21,6 +21,7 @@ from collectors.threat_feed_collector import collect_threat_feeds, save_threatfo
 from extractors.ioc_extractor import process_rss_entries
 from extractors.ioc_lookup import lookup_ioc
 from tools.blockchain_forensics import investigate_wallet
+from tools.network_security import investigate_network
 
 # Configure basic logging so we can see what the bot is doing as it runs.
 logging.basicConfig(
@@ -292,6 +293,91 @@ async def walletinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await update.message.reply_text("\n".join(lines))
 
+async def netinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles /netinfo <ip_or_domain> — network security investigation."""
+    user = update.effective_user
+    logger.info("Received /netinfo from user_id=%s", user.id)
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /netinfo <ip_or_domain>\n"
+            "Examples:\n"
+            "  /netinfo 8.8.8.8\n"
+            "  /netinfo malware.example.com"
+        )
+        return
+
+    value = " ".join(context.args).strip()
+    await update.message.reply_text(f"🔍 Investigating: {value}")
+
+    result = await investigate_network(value)
+
+    if "error" in result:
+        await update.message.reply_text(f"⚠️ {result.get('message', result['error'])}")
+        return
+
+    ioc_type = result["ioc_type"]
+    geo = result["geo"]
+    abuse = result["abuseipdb"]
+    vt = result["virustotal"]
+
+    lines = [f"🌐 Network Investigation\n"]
+    lines.append(f"Target: {value}")
+    lines.append(f"Type: {ioc_type}\n")
+
+    # Geolocation (IP only)
+    if geo and not geo.get("error"):
+        lines.append(
+            f"📍 {geo.get('city', '')}, {geo.get('country', '')} "
+            f"({geo.get('country_code', '')})"
+        )
+        lines.append(f"🏢 ISP: {geo.get('isp', 'unknown')}")
+        lines.append(f"🔢 ASN: {geo.get('asn', 'unknown')}")
+        flags = []
+        if geo.get("is_proxy"):
+            flags.append("⚠️ PROXY")
+        if geo.get("is_hosting"):
+            flags.append("🖥️ HOSTING")
+        if flags:
+            lines.append(f"Flags: {' | '.join(flags)}")
+
+    # AbuseIPDB (IP only)
+    if abuse and not abuse.get("error"):
+        score = abuse.get("abuse_confidence_score", 0)
+        reports = abuse.get("total_reports", 0)
+        if score >= 75:
+            verdict = "🚨 HIGH RISK"
+        elif score >= 25:
+            verdict = "⚠️ SUSPICIOUS"
+        else:
+            verdict = "✅ LOW RISK"
+        lines.append(
+            f"\nAbuseIPDB: {verdict} "
+            f"(score: {score}%, reports: {reports})"
+        )
+        if abuse.get("last_reported_at"):
+            lines.append(f"Last reported: {abuse['last_reported_at'][:10]}")
+
+    # VirusTotal
+    if vt and not vt.get("error"):
+        mal = vt.get("malicious", 0)
+        sus = vt.get("suspicious", 0)
+        clean = vt.get("harmless", 0)
+        if mal >= 5:
+            vt_verdict = "🚨 MALICIOUS"
+        elif mal >= 1 or sus >= 3:
+            vt_verdict = "⚠️ SUSPICIOUS"
+        else:
+            vt_verdict = "✅ CLEAN"
+        lines.append(
+            f"VirusTotal: {vt_verdict} "
+            f"({mal} malicious, {sus} suspicious, {clean} clean)"
+        )
+        if vt.get("categories"):
+            lines.append(f"Categories: {', '.join(vt['categories'])}")
+
+    await update.message.reply_text("\n".join(lines))
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Global error handler. PTB calls this automatically whenever any
@@ -327,6 +413,7 @@ def main() -> None:
     application.add_handler(CommandHandler("extract", extract_command))
     application.add_handler(CommandHandler("lookup", lookup_command))
     application.add_handler(CommandHandler("walletinfo", walletinfo_command))
+    application.add_handler(CommandHandler("netinfo", netinfo_command))
     application.add_error_handler(error_handler)
 
     logger.info("Bot is starting polling...")
