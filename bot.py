@@ -22,6 +22,11 @@ from extractors.ioc_extractor import process_rss_entries
 from extractors.ioc_lookup import lookup_ioc
 from tools.blockchain_forensics import investigate_wallet
 from tools.network_security import investigate_network
+from services.active.auth import authorize_target, deauthorize_target, is_authorized
+from services.active.recon_service import ReconService
+from services.active.network_scan_service import NetworkScanService
+from services.active.web_service import WebService
+from services.active.webapp_service import WebAppService
 
 # Configure basic logging so we can see what the bot is doing as it runs.
 logging.basicConfig(
@@ -378,6 +383,175 @@ async def netinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     await update.message.reply_text("\n".join(lines))
 
+async def authorize_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles /authorize <target> — pre-authorizes a target for active scanning."""
+    user = update.effective_user
+    logger.info("Received /authorize from user_id=%s", user.id)
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /authorize <target>\n"
+            "Examples:\n"
+            "  /authorize scanme.nmap.org\n"
+            "  /authorize https://mysite.com\n\n"
+            "⚠️ Only authorize targets you own or have explicit permission to test."
+        )
+        return
+
+    target = " ".join(context.args).strip()
+    is_new = authorize_target(target, authorized_by=user.id)
+
+    if is_new:
+        await update.message.reply_text(
+            f"✅ Target authorized for scanning: {target}\n"
+            f"You can now use /scan against this target.\n"
+            f"Authorization resets on bot restart."
+        )
+    else:
+        await update.message.reply_text(
+            f"ℹ️ Target already authorized: {target}"
+        )
+
+
+async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handles /scan <tool> <target> — runs an authorized active scan.
+
+    Tools: subfinder, nmap, nuclei, ffuf
+    """
+    user = update.effective_user
+    logger.info("Received /scan from user_id=%s", user.id)
+
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "Usage: /scan <tool> <target>\n\n"
+            "Available tools:\n"
+            "  subfinder — subdomain discovery\n"
+            "  nmap      — port scanning\n"
+            "  nuclei    — vulnerability scanning\n"
+            "  ffuf      — directory/endpoint fuzzing\n\n"
+            "Example: /scan nmap scanme.nmap.org\n"
+            "Run /authorize <target> first."
+        )
+        return
+
+    tool = context.args[0].lower().strip()
+    target = " ".join(context.args[1:]).strip()
+
+    authorized, reason = is_authorized(user.id, target)
+    if not authorized:
+        await update.message.reply_text(
+            f"⛔ Not authorized: {reason}\n"
+            f"Use /authorize {target} first."
+        )
+        return
+
+    await update.message.reply_text(f"🔄 Running {tool} against {target}...")
+
+    try:
+        if tool == "subfinder":
+            svc = ReconService()
+            result = await svc.subfinder(target, user_id=user.id)
+        elif tool == "nmap":
+            svc = NetworkScanService()
+            result = await svc.quick_scan(target, user_id=user.id)
+        elif tool == "nuclei":
+            svc = WebService()
+            result = await svc.nuclei_scan(target, profile="safe", user_id=user.id)
+        elif tool == "ffuf":
+            svc = WebAppService()
+            result = await svc.ffuf_scan(target, user_id=user.id)
+        else:
+            await update.message.reply_text(
+                f"⚠️ Unknown tool: {tool}\n"
+                "Available: subfinder, nmap, nuclei, ffuf"
+            )
+            return
+    except Exception as exc:
+        logger.error("Scan error: %s", exc, exc_info=True)
+        await update.message.reply_text(f"⚠️ Scan error: {exc}")
+        return
+
+    if not result["success"]:
+        await update.message.reply_text(f"⚠️ {result['error']}")
+        return
+
+    data = result["data"]
+    lines = [f"✅ {tool.upper()} scan complete\n"]
+    lines.append(f"Target: {target}")
+    lines.append(f"Summary: {result['summary']}\n")
+
+    if tool == "subfinder":
+        subs = data.get("subdomains", [])
+        if subs:
+            lines.append(f"Subdomains ({len(subs)}):")
+            for s in subs[:10]:
+                lines.append(f"  • {s}")
+            if len(subs) > 10:
+                lines.append(f"  ... and {len(subs)-10} more")
+        else:
+            lines.append("No subdomains found.")
+
+    elif tool == "nmap":
+        ports = data.get("ports", [])
+        if ports:
+            lines.append(f"Open ports ({data.get('open_count', 0)}):")
+            for p in ports[:10]:
+                lines.append(f"  • {p['port']}/{p['protocol']} {p['service']}")
+        else:
+            lines.append("No open ports found.")
+
+    elif tool == "nuclei":
+        findings = data.get("findings", [])
+        by_sev = data.get("by_severity", {})
+        if findings:
+            lines.append(f"Findings by severity: {by_sev}")
+            seen_names = set()
+            for f in findings:
+                if f["name"] not in seen_names:
+                    lines.append(f"  [{f['severity']}] {f['name']}")
+                    seen_names.add(f["name"])
+                    if len(seen_names) >= 8:
+                        break
+        else:
+            lines.append("No findings.")
+
+    elif tool == "ffuf":
+        results = data.get("results", [])
+        if results:
+            lines.append(f"Paths found ({len(results)}):")
+            for r in results[:10]:
+                lines.append(f"  • [{r['status']}] {r['input']}")
+        else:
+            lines.append("No paths found.")
+
+    await update.message.reply_text("\n".join(lines))
+
+
+async def auditlog_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles /auditlog — shows recent security operation audit log."""
+    user = update.effective_user
+    logger.info("Received /auditlog from user_id=%s", user.id)
+
+    from audit.audit_logger import read_recent_audit_logs
+    logs = read_recent_audit_logs(limit=10)
+
+    if not logs:
+        await update.message.reply_text("No audit log entries yet.")
+        return
+
+    lines = ["📋 Recent Security Operations\n"]
+    for entry in logs:
+        ts = entry["timestamp"][:19].replace("T", " ")
+        lines.append(
+            f"• {ts}\n"
+            f"  {entry['operation_type']} | {entry['tool_name']}\n"
+            f"  target: {entry['target'][:40]}\n"
+            f"  {entry['result_summary'][:60]}\n"
+        )
+
+    await update.message.reply_text("\n".join(lines))
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Global error handler. PTB calls this automatically whenever any
@@ -414,6 +588,9 @@ def main() -> None:
     application.add_handler(CommandHandler("lookup", lookup_command))
     application.add_handler(CommandHandler("walletinfo", walletinfo_command))
     application.add_handler(CommandHandler("netinfo", netinfo_command))
+    application.add_handler(CommandHandler("authorize", authorize_command))
+    application.add_handler(CommandHandler("scan", scan_command))
+    application.add_handler(CommandHandler("auditlog", auditlog_command))
     application.add_error_handler(error_handler)
 
     logger.info("Bot is starting polling...")
