@@ -110,3 +110,28 @@ class ExtractedIOC(Base):
     def __repr__(self) -> str:
         return f"<ExtractedIOC id={self.id} type={self.ioc_type!r} value={self.value!r}>"
 
+class IocScore(Base):
+    __tablename__ = "ioc_scores"
+    __table_args__ = (
+        UniqueConstraint(
+            "ioc_value", "ioc_type",
+            name="uq_ioc_scores_value_type",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ioc_value: Mapped[str] = mapped_column(String(1000), nullable=False)
+    ioc_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False)
+    explanation: Mapped[str] = mapped_column(String(2000), nullable=True)
+    signals: Mapped[str] = mapped_column(String(2000), nullable=True)
+    scored_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    def __repr__(self) -> str:
+        return (
+            f"<IocScore id={self.id} ioc={self.ioc_value!r} "
+            f"score={self.score} severity={self.severity!r}>"
+        )
+
