@@ -27,6 +27,7 @@ from services.active.recon_service import ReconService
 from services.active.network_scan_service import NetworkScanService
 from services.active.web_service import WebService
 from services.active.webapp_service import WebAppService
+from scoring.threat_scorer import process_unscored_iocs, get_top_threats
 
 # Configure basic logging so we can see what the bot is doing as it runs.
 logging.basicConfig(
@@ -552,6 +553,59 @@ async def auditlog_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     await update.message.reply_text("\n".join(lines))
 
+async def score_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles /score — runs threat scoring on unscored IOCs."""
+    user = update.effective_user
+    logger.info("Received /score from user_id=%s", user.id)
+
+    await update.message.reply_text("🔄 Scoring unscored IOCs, please wait...")
+
+    import asyncio
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, process_unscored_iocs, 200)
+
+    lines = [
+        f"✅ Threat Scoring Complete\n",
+        f"🎯 Newly scored: {result['scored']}",
+        f"🔄 Updated: {result['updated']}",
+        f"⚠️ Errors: {result['errors']}",
+    ]
+
+    if result["scored"] == 0 and result["updated"] == 0:
+        lines.append("\n(All IOCs already scored — run /threats first to collect new ones)")
+
+    await update.message.reply_text("\n".join(lines))
+
+
+async def topthreats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles /topthreats — shows highest-scoring IOCs."""
+    user = update.effective_user
+    logger.info("Received /topthreats from user_id=%s", user.id)
+
+    import asyncio
+    loop = asyncio.get_event_loop()
+    threats = await loop.run_in_executor(
+        None, get_top_threats, 10, "HIGH"
+    )
+
+    if not threats:
+        await update.message.reply_text(
+            "No HIGH or CRITICAL threats found.\n"
+            "Run /threats then /score first."
+        )
+        return
+
+    lines = [f"🚨 Top Threats (HIGH+)\n"]
+    for t in threats:
+        sev_emoji = "🔴" if t["severity"] == "CRITICAL" else "🟠"
+        lines.append(
+            f"{sev_emoji} [{t['severity']}] Score: {t['score']}\n"
+            f"   {t['ioc_value']} ({t['ioc_type']})\n"
+            f"   {t['explanation']}"
+        )
+
+    await update.message.reply_text("\n".join(lines))
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Global error handler. PTB calls this automatically whenever any
@@ -591,6 +645,8 @@ def main() -> None:
     application.add_handler(CommandHandler("authorize", authorize_command))
     application.add_handler(CommandHandler("scan", scan_command))
     application.add_handler(CommandHandler("auditlog", auditlog_command))
+    application.add_handler(CommandHandler("score", score_command))
+    application.add_handler(CommandHandler("topthreats", topthreats_command))
     application.add_error_handler(error_handler)
 
     logger.info("Bot is starting polling...")
