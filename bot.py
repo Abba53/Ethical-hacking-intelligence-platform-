@@ -677,6 +677,365 @@ async def aithreat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     await update.message.reply_text("\n".join(lines))
 
+async def aiscan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles /aiscan <tool> <target> — runs an authorized scan, then AI-interprets the results."""
+    user = update.effective_user
+    logger.info("Received /aiscan from user_id=%s", user.id)
+
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "Usage: /aiscan <tool> <target>\n\n"
+            "Available tools:\n"
+            "  subfinder — subdomain discovery\n"
+            "  nmap      — port scanning\n"
+            "  nuclei    — vulnerability scanning\n"
+            "  ffuf      — directory/endpoint fuzzing\n\n"
+            "Example: /aiscan nmap scanme.nmap.org\n"
+            "Run /authorize <target> first."
+        )
+        return
+
+    tool = context.args[0].lower().strip()
+    target = " ".join(context.args[1:]).strip()
+
+    authorized, reason = is_authorized(user.id, target)
+    if not authorized:
+        await update.message.reply_text(
+            f"⛔ Not authorized: {reason}\n"
+            f"Use /authorize {target} first."
+        )
+        return
+
+    await update.message.reply_text(f"🔄 Running {tool} against {target}...")
+
+    try:
+        if tool == "subfinder":
+            svc = ReconService()
+            result = await svc.subfinder(target, user_id=user.id)
+        elif tool == "nmap":
+            svc = NetworkScanService()
+            result = await svc.quick_scan(target, user_id=user.id)
+        elif tool == "nuclei":
+            svc = WebService()
+            result = await svc.nuclei_scan(target, profile="safe", user_id=user.id)
+        elif tool == "ffuf":
+            svc = WebAppService()
+            result = await svc.ffuf_scan(target, user_id=user.id)
+        else:
+            await update.message.reply_text(
+                f"⚠️ Unknown tool: {tool}\n"
+                "Available: subfinder, nmap, nuclei, ffuf"
+            )
+            return
+    except Exception as exc:
+        logger.error("Scan error: %s", exc, exc_info=True)
+        await update.message.reply_text(f"⚠️ Scan error: {exc}")
+        return
+
+    if not result["success"]:
+        await update.message.reply_text(f"⚠️ {result['error']}")
+        return
+
+    await update.message.reply_text("🤖 Running AI interpretation of scan results...")
+
+    workflow = AIWorkflow()
+    wf_result = await workflow.analyze_scan(
+        tool=tool,
+        target=target,
+        results=result["data"],
+    )
+
+    if not wf_result.success:
+        error_msg = wf_result.errors[0] if wf_result.errors else "Unknown error"
+        await update.message.reply_text(f"⚠️ AI analysis failed: {error_msg}")
+        return
+
+    response = wf_result.data["response"]
+    report = response.analysis
+
+    lines = [f"🤖 AI Scan Analysis: {tool} on {target}\n"]
+    lines.append(f"Summary: {report.executive_summary}")
+    lines.append(f"Attack Surface: {report.attack_surface}")
+
+    if report.exposed_assets:
+        lines.append("\nExposed Assets:")
+        for a in report.exposed_assets[:5]:
+            lines.append(f"  • {a}")
+
+    if report.entry_points:
+        lines.append("\nPossible Entry Points:")
+        for e in report.entry_points[:5]:
+            lines.append(f"  • {e}")
+
+    if report.false_positives:
+        lines.append("\nFalse Positives:")
+        for fp in report.false_positives[:5]:
+            lines.append(f"  • {fp}")
+
+    if report.recommendations:
+        lines.append("\nRecommendations:")
+        for rec in report.recommendations[:5]:
+            lines.append(f"  • {rec}")
+
+    await update.message.reply_text("\n".join(lines))
+
+
+async def ainetwork_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles /ainetwork <ip_or_domain> — runs AI-powered network intelligence analysis."""
+    user = update.effective_user
+    logger.info("Received /ainetwork from user_id=%s", user.id)
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /ainetwork <ip_or_domain>\n"
+            "Examples:\n"
+            "  /ainetwork 8.8.8.8\n"
+            "  /ainetwork malware.example.com"
+        )
+        return
+
+    value = " ".join(context.args).strip()
+    await update.message.reply_text(f"🔍 Gathering network intelligence on: {value}")
+
+    result = await investigate_network(value)
+
+    if "error" in result:
+        await update.message.reply_text(f"⚠️ {result.get('message', result['error'])}")
+        return
+
+    await update.message.reply_text("🤖 Running AI network analysis...")
+
+    workflow = AIWorkflow()
+    wf_result = await workflow.analyze_network(
+        target=value,
+        data=result,
+    )
+
+    if not wf_result.success:
+        error_msg = wf_result.errors[0] if wf_result.errors else "Unknown error"
+        await update.message.reply_text(f"⚠️ AI analysis failed: {error_msg}")
+        return
+
+    response = wf_result.data["response"]
+    report = response.analysis
+
+    lines = [f"🤖 AI Network Analysis: {value}\n"]
+    lines.append(f"Reputation: {report.reputation}")
+    lines.append(f"Risk: {report.risk}")
+    lines.append(f"Infrastructure: {report.infrastructure}")
+    lines.append(f"Abuse History: {report.abuse_history}")
+
+    if report.observations:
+        lines.append("\nObservations:")
+        for o in report.observations[:5]:
+            lines.append(f"  • {o}")
+
+    if report.recommendations:
+        lines.append("\nRecommendations:")
+        for rec in report.recommendations[:5]:
+            lines.append(f"  • {rec}")
+
+    await update.message.reply_text("\n".join(lines))
+
+
+async def aiweb_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles /aiweb <target> — runs an authorized web scan, then AI-interprets the findings."""
+    user = update.effective_user
+    logger.info("Received /aiweb from user_id=%s", user.id)
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /aiweb <target>\n"
+            "Example: /aiweb https://example.com\n"
+            "Run /authorize <target> first."
+        )
+        return
+
+    target = " ".join(context.args).strip()
+
+    authorized, reason = is_authorized(user.id, target)
+    if not authorized:
+        await update.message.reply_text(
+            f"⛔ Not authorized: {reason}\n"
+            f"Use /authorize {target} first."
+        )
+        return
+
+    await update.message.reply_text(f"🔄 Running web scan against {target}...")
+
+    try:
+        svc = WebService()
+        result = await svc.nuclei_scan(target, profile="safe", user_id=user.id)
+    except Exception as exc:
+        logger.error("Web scan error: %s", exc, exc_info=True)
+        await update.message.reply_text(f"⚠️ Scan error: {exc}")
+        return
+
+    if not result["success"]:
+        await update.message.reply_text(f"⚠️ {result['error']}")
+        return
+
+    await update.message.reply_text("🤖 Running AI interpretation of web scan findings...")
+
+    workflow = AIWorkflow()
+    wf_result = await workflow.analyze_web(
+        target=target,
+        findings=result["data"],
+    )
+
+    if not wf_result.success:
+        error_msg = wf_result.errors[0] if wf_result.errors else "Unknown error"
+        await update.message.reply_text(f"⚠️ AI analysis failed: {error_msg}")
+        return
+
+    response = wf_result.data["response"]
+    report = response.analysis
+
+    lines = [f"🤖 AI Web Analysis: {target}\n"]
+    lines.append(f"Summary: {report.executive_summary}")
+    lines.append(f"Risk: {report.risk}")
+
+    if report.findings:
+        lines.append("\nFindings:")
+        for f in report.findings[:5]:
+            lines.append(f"  • {f}")
+
+    if report.vulnerabilities:
+        lines.append("\nVulnerabilities:")
+        for v in report.vulnerabilities[:5]:
+            lines.append(f"  • {v}")
+
+    if report.misconfigurations:
+        lines.append("\nMisconfigurations:")
+        for m in report.misconfigurations[:5]:
+            lines.append(f"  • {m}")
+
+    if report.recommendations:
+        lines.append("\nRecommendations:")
+        for rec in report.recommendations[:5]:
+            lines.append(f"  • {rec}")
+
+    await update.message.reply_text("\n".join(lines))
+
+
+async def aimalware_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles /aimalware <evidence description> — runs AI-powered malware analysis on free-text evidence."""
+    user = update.effective_user
+    logger.info("Received /aimalware from user_id=%s", user.id)
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /aimalware <evidence description>\n"
+            "Example: /aimalware Sample drops a DLL into %APPDATA%, "
+            "establishes a beacon to 45.33.10.20 every 60s, and modifies "
+            "the Run registry key for persistence."
+        )
+        return
+
+    evidence_text = " ".join(context.args).strip()
+    await update.message.reply_text("🤖 Running AI malware analysis...")
+
+    workflow = AIWorkflow()
+    wf_result = await workflow.analyze_malware(
+        malware={"evidence": evidence_text},
+    )
+
+    if not wf_result.success:
+        error_msg = wf_result.errors[0] if wf_result.errors else "Unknown error"
+        await update.message.reply_text(f"⚠️ AI analysis failed: {error_msg}")
+        return
+
+    response = wf_result.data["response"]
+    report = response.analysis
+
+    lines = [f"🤖 AI Malware Analysis\n"]
+    lines.append(f"Summary: {report.executive_summary}")
+    if report.malware_name:
+        lines.append(f"Name: {report.malware_name}")
+    if report.malware_family:
+        lines.append(f"Family: {report.malware_family}")
+    if report.malware_type:
+        lines.append(f"Type: {report.malware_type}")
+    lines.append(f"Confidence: {report.confidence}")
+    lines.append(f"Severity: {report.severity}")
+    lines.append(f"Risk Score: {report.risk_score}")
+
+    if report.capabilities:
+        lines.append("\nCapabilities:")
+        for c in report.capabilities[:5]:
+            lines.append(f"  • {c}")
+
+    if report.indicators_of_compromise:
+        lines.append("\nIndicators of Compromise:")
+        for ioc in report.indicators_of_compromise[:5]:
+            lines.append(f"  • {ioc}")
+
+    if report.mitre_attack:
+        lines.append(f"\nMITRE ATT&CK: {', '.join(report.mitre_attack)}")
+
+    if report.recommendations:
+        lines.append("\nRecommendations:")
+        for rec in report.recommendations[:5]:
+            lines.append(f"  • {rec}")
+
+    if report.detection_opportunities:
+        lines.append("\nDetection Opportunities:")
+        for d in report.detection_opportunities[:5]:
+            lines.append(f"  • {d}")
+
+    await update.message.reply_text("\n".join(lines))
+
+
+async def aiexecutive_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles /aiexecutive <incident description> — produces an AI-powered executive summary."""
+    user = update.effective_user
+    logger.info("Received /aiexecutive from user_id=%s", user.id)
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /aiexecutive <incident description>\n"
+            "Example: /aiexecutive Three endpoints in the finance "
+            "department were compromised via a phishing email delivering "
+            "a Cobalt Strike loader; lateral movement observed to two "
+            "file servers before containment."
+        )
+        return
+
+    incident_text = " ".join(context.args).strip()
+    await update.message.reply_text("🤖 Generating executive summary...")
+
+    workflow = AIWorkflow()
+    wf_result = await workflow.executive_summary(
+        report={"incident_description": incident_text},
+    )
+
+    if not wf_result.success:
+        error_msg = wf_result.errors[0] if wf_result.errors else "Unknown error"
+        await update.message.reply_text(f"⚠️ AI analysis failed: {error_msg}")
+        return
+
+    response = wf_result.data["response"]
+    report = response.analysis
+
+    lines = [f"🤖 Executive Summary\n"]
+    lines.append(f"Summary: {report.summary}")
+    lines.append(f"\nBusiness Impact: {report.business_impact}")
+    lines.append(f"Technical Impact: {report.technical_impact}")
+    lines.append(f"Overall Risk: {report.overall_risk}")
+
+    if report.priorities:
+        lines.append("\nPriorities:")
+        for p in report.priorities[:5]:
+            lines.append(f"  • {p}")
+
+    if report.next_actions:
+        lines.append("\nNext Actions:")
+        for a in report.next_actions[:5]:
+            lines.append(f"  • {a}")
+
+    await update.message.reply_text("\n".join(lines))
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Global error handler. PTB calls this automatically whenever any
@@ -719,6 +1078,11 @@ def main() -> None:
     application.add_handler(CommandHandler("score", score_command))
     application.add_handler(CommandHandler("topthreats", topthreats_command))
     application.add_handler(CommandHandler("aithreat", aithreat_command))
+    application.add_handler(CommandHandler("aiscan", aiscan_command))
+    application.add_handler(CommandHandler("ainetwork", ainetwork_command))
+    application.add_handler(CommandHandler("aiweb", aiweb_command))
+    application.add_handler(CommandHandler("aimalware", aimalware_command))
+    application.add_handler(CommandHandler("aiexecutive", aiexecutive_command))
     application.add_error_handler(error_handler)
 
     logger.info("Bot is starting polling...")
