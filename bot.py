@@ -28,6 +28,7 @@ from services.active.network_scan_service import NetworkScanService
 from services.active.web_service import WebService
 from services.active.webapp_service import WebAppService
 from scoring.threat_scorer import process_unscored_iocs, get_top_threats
+from workflows.ai_workflow import AIWorkflow
 
 # Configure basic logging so we can see what the bot is doing as it runs.
 logging.basicConfig(
@@ -606,6 +607,76 @@ async def topthreats_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await update.message.reply_text("\n".join(lines))
 
+async def aithreat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles /aithreat <ioc_value> — runs AI-powered threat analysis on an IOC."""
+    user = update.effective_user
+    logger.info("Received /aithreat from user_id=%s", user.id)
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /aithreat <ioc_value>\n"
+            "Examples:\n"
+            "  /aithreat 192.168.1.1\n"
+            "  /aithreat malware.example.com"
+        )
+        return
+
+    value = " ".join(context.args).strip()
+    await update.message.reply_text(f"🤖 Running AI threat analysis on: {value}")
+
+    lookup_result = await lookup_ioc(value)
+    ioc_type = lookup_result["ioc_type"]
+    local = lookup_result["local"]
+
+    signals = {
+        "threatfox_matches": local["threatfox"],
+        "extracted_article_matches": local["extracted"],
+        "chainabuse_matches": lookup_result["chainabuse"],
+    }
+
+    workflow = AIWorkflow()
+    wf_result = await workflow.analyze_threat(
+        target=value,
+        threat_score=0,
+        severity="UNKNOWN",
+        ioc_type=ioc_type,
+        signals=signals,
+    )
+
+    if not wf_result.success:
+        error_msg = wf_result.errors[0] if wf_result.errors else "Unknown error"
+        await update.message.reply_text(f"⚠️ AI analysis failed: {error_msg}")
+        return
+
+    response = wf_result.data["response"]
+    report = response.analysis
+
+    lines = [f"🤖 AI Threat Analysis: {value}\n"]
+    lines.append(f"Summary: {report.executive_summary}")
+    lines.append(f"Assessment: {report.threat_assessment}")
+    lines.append(f"Attack Stage: {report.attack_stage}")
+    lines.append(f"Confidence: {report.confidence}")
+    lines.append(f"Priority: {report.priority}")
+
+    if report.malware:
+        lines.append(f"Malware: {report.malware}")
+    if report.threat_actor:
+        lines.append(f"Threat Actor: {report.threat_actor}")
+    if report.mitre_attack:
+        lines.append(f"MITRE ATT&CK: {', '.join(report.mitre_attack)}")
+
+    if report.recommendations:
+        lines.append("\nRecommendations:")
+        for rec in report.recommendations[:5]:
+            lines.append(f"  • {rec}")
+
+    if report.detection_opportunities:
+        lines.append("\nDetection Opportunities:")
+        for d in report.detection_opportunities[:5]:
+            lines.append(f"  • {d}")
+
+    await update.message.reply_text("\n".join(lines))
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Global error handler. PTB calls this automatically whenever any
@@ -647,6 +718,7 @@ def main() -> None:
     application.add_handler(CommandHandler("auditlog", auditlog_command))
     application.add_handler(CommandHandler("score", score_command))
     application.add_handler(CommandHandler("topthreats", topthreats_command))
+    application.add_handler(CommandHandler("aithreat", aithreat_command))
     application.add_error_handler(error_handler)
 
     logger.info("Bot is starting polling...")

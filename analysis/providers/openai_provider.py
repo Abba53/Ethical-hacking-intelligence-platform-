@@ -2,6 +2,8 @@ import os
 
 from openai import AsyncOpenAI
 
+from analysis.models.ai_response import AIResponse
+
 from .base_provider import BaseAIProvider
 
 
@@ -24,7 +26,7 @@ class OpenAIProvider(BaseAIProvider):
 
         return self._client
 
-    async def analyze(self, prompt: str) -> dict:
+    async def analyze(self, prompt: str) -> AIResponse:
         try:
             client = self._get_client()
 
@@ -35,16 +37,20 @@ class OpenAIProvider(BaseAIProvider):
                 ],
             )
         except Exception as exc:
-            return {
-                "success": False,
-                "provider": self.provider_name,
-                "analysis": "",
-                "error": f"{type(exc).__name__}: {exc}",
-            }
+            return AIResponse(
+                success=False,
+                provider=self.provider_name,
+                report_type="",
+                analysis=None,
+                error=f"{type(exc).__name__}: {exc}",
+            )
 
-        return {
-            "success": True,
-            "provider": self.provider_name,
-            "analysis": response.choices[0].message.content,
-            "error": None,
-        }
+        text = response.choices[0].message.content
+
+        return AIResponse(
+            success=True,
+            provider=self.provider_name,
+            report_type="",
+            analysis=text,
+            raw_response=text,
+        )

@@ -2,6 +2,8 @@ import os
 
 from anthropic import AsyncAnthropic
 
+from analysis.models.ai_response import AIResponse
+
 from .base_provider import BaseAIProvider
 
 
@@ -24,7 +26,7 @@ class AnthropicProvider(BaseAIProvider):
 
         return self._client
 
-    async def analyze(self, prompt: str) -> dict:
+    async def analyze(self, prompt: str) -> AIResponse:
         try:
             client = self._get_client()
 
@@ -36,20 +38,23 @@ class AnthropicProvider(BaseAIProvider):
                 ],
             )
         except Exception as exc:
-            return {
-                "success": False,
-                "provider": self.provider_name,
-                "analysis": "",
-                "error": f"{type(exc).__name__}: {exc}",
-            }
+            return AIResponse(
+                success=False,
+                provider=self.provider_name,
+                report_type="",
+                analysis=None,
+                error=f"{type(exc).__name__}: {exc}",
+            )
 
         text_blocks = [
             block.text for block in response.content if block.type == "text"
         ]
+        text = "".join(text_blocks)
 
-        return {
-            "success": True,
-            "provider": self.provider_name,
-            "analysis": "".join(text_blocks),
-            "error": None,
-        }
+        return AIResponse(
+            success=True,
+            provider=self.provider_name,
+            report_type="",
+            analysis=text,
+            raw_response=text,
+        )
