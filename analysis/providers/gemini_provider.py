@@ -1,6 +1,6 @@
 import os
 
-from google import genai
+import httpx
 
 from analysis.models.ai_response import AIResponse
 
@@ -13,28 +13,63 @@ class GeminiProvider(BaseAIProvider):
     model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
     def __init__(self):
-        self._client = None
+        self.api_key = os.getenv("GEMINI_API_KEY")
 
-    def _get_client(self):
-        if self._client is None:
-            api_key = os.getenv("GEMINI_API_KEY")
-            if not api_key:
-                raise RuntimeError(
-                    "GEMINI_API_KEY environment variable is not set."
-                )
-            self._client = genai.Client(api_key=api_key)
-
-        return self._client
+        if not self.api_key:
+            raise RuntimeError(
+                "GEMINI_API_KEY environment variable is not set."
+            )
 
     async def analyze(self, prompt: str) -> AIResponse:
-        try:
-            client = self._get_client()
 
-            response = await client.aio.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-            )
+        url = (
+            f"https://generativelanguage.googleapis.com/v1beta/"
+            f"models/{self.model_name}:generateContent"
+        )
+
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {
+                            "text": prompt
+                        }
+                    ]
+                }
+            ]
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+
+                response = await client.post(
+                    url,
+                    params={
+                        "key": self.api_key
+                    },
+                    json=payload,
+                )
+
+                response.raise_for_status()
+
+                data = response.json()
+
+                text = (
+                    data["candidates"][0]
+                    ["content"]["parts"][0]
+                    ["text"]
+                )
+
+                return AIResponse(
+                    success=True,
+                    provider=self.provider_name,
+                    report_type="",
+                    analysis=text,
+                    raw_response=data,
+                )
+
         except Exception as exc:
+
             return AIResponse(
                 success=False,
                 provider=self.provider_name,
@@ -42,11 +77,3 @@ class GeminiProvider(BaseAIProvider):
                 analysis=None,
                 error=f"{type(exc).__name__}: {exc}",
             )
-
-        return AIResponse(
-            success=True,
-            provider=self.provider_name,
-            report_type="",
-            analysis=response.text,
-            raw_response=response.text,
-        )

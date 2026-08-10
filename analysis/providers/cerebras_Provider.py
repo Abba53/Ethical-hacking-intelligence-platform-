@@ -8,16 +8,19 @@ from analysis.models.ai_response import AIResponse
 from .base_provider import BaseAIProvider
 
 
-class FireworksProvider(BaseAIProvider):
+class CerebrasProvider(BaseAIProvider):
     """
-    Fireworks AI's API is OpenAI-compatible.
+    Cerebras's API is OpenAI-compatible.
+
+    Note:
+    Cerebras rejects frequency_penalty, presence_penalty and logit_bias,
+    so this provider intentionally sends only the model and messages.
     """
 
-    provider_name = "fireworks"
-
+    provider_name = "cerebras"
     model_name = os.getenv(
-        "FIREWORKS_MODEL",
-        "accounts/fireworks/models/llama-v3p3-70b-instruct",
+        "CEREBRAS_MODEL",
+        "llama3.1-8b",
     )
 
     def __init__(self):
@@ -25,16 +28,15 @@ class FireworksProvider(BaseAIProvider):
 
     def _get_client(self):
         if self._client is None:
-            api_key = os.getenv("FIREWORKS_API_KEY")
-
+            api_key = os.getenv("CEREBRAS_API_KEY")
             if not api_key:
                 raise RuntimeError(
-                    "FIREWORKS_API_KEY environment variable is not set."
+                    "CEREBRAS_API_KEY environment variable is not set."
                 )
 
             self._client = AsyncOpenAI(
                 api_key=api_key,
-                base_url="https://api.fireworks.ai/inference/v1",
+                base_url="https://api.cerebras.ai/v1",
             )
 
         return self._client

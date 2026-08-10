@@ -1,0 +1,17 @@
+CAMPAIGN_SCHEMA = {
+    "executive_summary": "",
+    "campaign_assessment": "",
+    "campaign_name": "",
+    "threat_actors": [],
+    "malware": [],
+    "infrastructure": [],
+    "targeted_sectors": [],
+    "targeted_regions": [],
+    "attack_stages": [],
+    "mitre_attack": [],
+    "indicators": [],
+    "confidence": "",
+    "risk": "",
+    "recommendations": [],
+    "detection_opportunities": [],
+}

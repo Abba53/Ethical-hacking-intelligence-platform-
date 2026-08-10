@@ -9,9 +9,7 @@ from analysis.models.network_report import NetworkReport
 from analysis.models.web_report import WebReport
 from analysis.models.executive_report import ExecutiveReport
 from analysis.models.malware_report import MalwareReport
-from analysis.models.campaign_report import CampaignReport
 
-from analysis.schema.campaign_schema import CAMPAIGN_SCHEMA
 from analysis.schema.threat_schema import THREAT_SCHEMA
 from analysis.schema.recon_schema import RECON_SCHEMA
 from analysis.schema.network_schema import NETWORK_SCHEMA
@@ -25,7 +23,7 @@ from analysis.prompts.network_prompt import NETWORK_PROMPT
 from analysis.prompts.web_prompt import WEB_PROMPT
 from analysis.prompts.malware_prompt import MALWARE_PROMPT
 from analysis.prompts.executive_prompt import EXECUTIVE_PROMPT
-from analysis.prompts.campaign_prompt import CAMPAIGN_PROMPT
+
 
 class AIAnalyst:
     """
@@ -194,19 +192,6 @@ Findings:
             report_type="malware",
             schema=MALWARE_SCHEMA,
             report_class=MalwareReport,
-        )
-
-    async def analyze_campaign(
-        self,
-        *,
-        campaign: dict,
-    ) -> AIResponse:
-        return await self._run_prompt(
-            CAMPAIGN_PROMPT,
-            str(campaign),
-            report_type="campaign",
-            schema=CAMPAIGN_SCHEMA,
-            report_class=CampaignReport,
         )
 
     async def executive_summary(

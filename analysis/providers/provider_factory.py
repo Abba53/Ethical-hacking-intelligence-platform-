@@ -17,8 +17,13 @@ from .omniroute_provider import OmniRouteProvider
 
 
 def get_provider():
+    provider = os.getenv("AI_PROVIDER", "gemini").strip().lower()
 
-    provider = os.getenv("AI_PROVIDER", "gemini").lower()
+    aliases = {
+        "nvidia": "nvidia_nim",
+    }
+
+    provider = aliases.get(provider, provider)
 
     mapping = {
         "openai": OpenAIProvider,
@@ -37,4 +42,13 @@ def get_provider():
         "omniroute": OmniRouteProvider,
     }
 
-    return mapping.get(provider, GeminiProvider)()
+    provider_cls = mapping.get(provider)
+
+    if provider_cls is None:
+        raise ValueError(
+            f"Unsupported AI_PROVIDER '{provider}'. "
+            f"Supported providers: "
+            f"{', '.join(sorted(mapping.keys()))}"
+        )
+
+    return provider_cls()
