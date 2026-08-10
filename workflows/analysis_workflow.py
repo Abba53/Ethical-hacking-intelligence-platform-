@@ -6,11 +6,23 @@ from workflows.web_workflow import WebWorkflow
 from workflows.lookup_workflow import LookupWorkflow
 from workflows.ai_workflow import AIWorkflow
 
+from services.active.target_utils import extract_hostname, ensure_scheme
+from tools.network_security import investigate_network
+
 
 class AnalysisWorkflow(BaseWorkflow):
     """
-    Orchestrates recon, network, and web scanning plus an IOC lookup
-    against a target, then runs AI analysis over each result set.
+    Orchestrates recon, nmap port scanning, network reputation
+    intelligence, web scanning, and an IOC lookup against a target,
+    then runs AI analysis over each result set.
+
+    "network_scan" (nmap open ports) and "network" (reputation/geo
+    intelligence via investigate_network) are two genuinely different
+    kinds of data, so they're kept as separate report keys rather
+    than conflated — nmap's port data is analyzed via analyze_scan
+    (ReconReport shape), matching how /aiscan already treats nmap
+    results, while investigate_network's reputation data is analyzed
+    via analyze_network (NetworkReport shape), matching /ainetwork.
 
     Deliberately does NOT call ReportWorkflow — that stays a separate,
     manually-triggered step that consumes this workflow's output.
@@ -23,7 +35,7 @@ class AnalysisWorkflow(BaseWorkflow):
         super().__init__()
 
         self.recon = ReconWorkflow()
-        self.network = NetworkWorkflow()
+        self.network_scan = NetworkWorkflow()
         self.web = WebWorkflow()
         self.lookup = LookupWorkflow()
         self.ai = AIWorkflow()
@@ -35,11 +47,14 @@ class AnalysisWorkflow(BaseWorkflow):
         user_id: int | str = "system",
     ) -> WorkflowResult:
 
+        hostname = extract_hostname(target)
+        web_target = ensure_scheme(target)
+
         errors: list[str] = []
         reports: dict = {}
 
         # Threat (IOC lookup-based, same pattern as /aithreat)
-        lookup_result = await self.lookup.lookup(target)
+        lookup_result = await self.lookup.lookup(hostname)
         if lookup_result.success:
             lookup_data = lookup_result.data["result"]
             signals = {
@@ -48,7 +63,7 @@ class AnalysisWorkflow(BaseWorkflow):
                 "chainabuse_matches": lookup_data["chainabuse"],
             }
             ai_threat = await self.ai.analyze_threat(
-                target=target,
+                target=hostname,
                 threat_score=0,
                 severity="UNKNOWN",
                 ioc_type=lookup_data["ioc_type"],
@@ -63,12 +78,12 @@ class AnalysisWorkflow(BaseWorkflow):
                 f"IOC lookup failed: {'; '.join(lookup_result.errors)}"
             )
 
-        # Recon
-        recon_result = await self.recon.subfinder(target, user_id=user_id)
+        # Recon (subfinder)
+        recon_result = await self.recon.subfinder(hostname, user_id=user_id)
         if recon_result.success:
             ai_recon = await self.ai.analyze_scan(
                 tool="subfinder",
-                target=target,
+                target=hostname,
                 results=recon_result.data,
             )
             if ai_recon.success:
@@ -80,27 +95,53 @@ class AnalysisWorkflow(BaseWorkflow):
                 f"recon scan failed: {'; '.join(recon_result.errors)}"
             )
 
-        # Network
-        network_result = await self.network.quick_scan(target, user_id=user_id)
-        if network_result.success:
+        # Network scan (nmap port scan — analyzed via analyze_scan,
+        # since it's recon-shaped data, not reputation data)
+        netscan_result = await self.network_scan.quick_scan(
+            hostname, user_id=user_id
+        )
+        if netscan_result.success:
+            ai_netscan = await self.ai.analyze_scan(
+                tool="nmap",
+                target=hostname,
+                results=netscan_result.data,
+            )
+            if ai_netscan.success:
+                reports["network_scan"] = ai_netscan.data["response"].analysis
+            else:
+                errors.append(
+                    f"network scan AI analysis failed: {ai_netscan.message}"
+                )
+        else:
+            errors.append(
+                f"network scan failed: {'; '.join(netscan_result.errors)}"
+            )
+
+        # Network intelligence (reputation/geo/abuse — the correct
+        # data source for analyze_network / NetworkReport)
+        network_intel = await investigate_network(hostname)
+        if "error" not in network_intel:
             ai_network = await self.ai.analyze_network(
-                target=target,
-                data=network_result.data,
+                target=hostname,
+                data=network_intel,
             )
             if ai_network.success:
                 reports["network"] = ai_network.data["response"].analysis
             else:
-                errors.append(f"network AI analysis failed: {ai_network.message}")
+                errors.append(
+                    f"network intelligence AI analysis failed: {ai_network.message}"
+                )
         else:
             errors.append(
-                f"network scan failed: {'; '.join(network_result.errors)}"
+                f"network intelligence lookup failed: "
+                f"{network_intel.get('message', network_intel.get('error'))}"
             )
 
         # Web
-        web_result = await self.web.nuclei_scan(target, user_id=user_id)
+        web_result = await self.web.nuclei_scan(web_target, user_id=user_id)
         if web_result.success:
             ai_web = await self.ai.analyze_web(
-                target=target,
+                target=web_target,
                 findings=web_result.data,
             )
             if ai_web.success:
@@ -117,8 +158,8 @@ class AnalysisWorkflow(BaseWorkflow):
         return WorkflowResult(
             success=overall_success,
             workflow=self.workflow_name,
-            message=f"Gathered {len(reports)}/4 AI report(s) for {target}.",
-            data={"target": target, "reports": reports},
+            message=f"Gathered {len(reports)}/5 AI report(s) for {hostname}.",
+            data={"target": hostname, "reports": reports},
             errors=errors,
         )
 

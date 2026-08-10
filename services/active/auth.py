@@ -7,127 +7,219 @@ Two-layer authorization model:
   1. User authorization: AUTHORIZED_SCAN_USERS — Telegram user IDs
      allowed to run any active scan at all.
   2. Target authorization: AUTHORIZED_SCAN_TARGETS — specific targets
-     that have been explicitly pre-authorized for scanning.
+     explicitly pre-authorized for scanning.
 
-Design notes:
-- AUTHORIZED_SCAN_USERS is loaded from environment variable
-  SCAN_AUTHORIZED_USERS (comma-separated Telegram user IDs).
-  Falls back to a hardcoded set containing only your own user ID.
-- AUTHORIZED_SCAN_TARGETS is an in-memory set, populated at runtime
-  via the /authorize bot command. It resets on bot restart — this is
-  deliberate: authorization should be an active, conscious decision
-  each session, not a persistent blanket permission.
-- Future FastAPI migration: these functions become middleware checks
-  on the /api/v1/scan/* endpoint family.
+Debug additions:
+- Logs authorization state after adding/removing targets.
+- Logs every authorization check.
+- Logs memory identity of AUTHORIZED_SCAN_TARGETS to detect
+  duplicate module/state issues.
 """
 
 import logging
 import os
 
 from dotenv import load_dotenv
+from services.active.target_utils import extract_hostname
 
 logger = logging.getLogger(__name__)
+
 load_dotenv()
 
+
 # ---------------------------------------------------------------------------
-# User authorization — who can run active scans at all
+# User authorization — who can run active scans
 # ---------------------------------------------------------------------------
 
 def _load_authorized_users() -> set[int]:
     """
     Loads authorized Telegram user IDs from environment.
-    Falls back to your known user ID if env var not set.
+    Falls back to known user ID if env variable is missing.
     """
     raw = os.getenv("SCAN_AUTHORIZED_USERS", "")
+
     if raw.strip():
         try:
-            ids = {int(uid.strip()) for uid in raw.split(",") if uid.strip()}
-            logger.info("Loaded %d authorized scan user(s) from env", len(ids))
+            ids = {
+                int(uid.strip())
+                for uid in raw.split(",")
+                if uid.strip()
+            }
+
+            logger.info(
+                "Loaded %d authorized scan user(s) from env",
+                len(ids),
+            )
+
             return ids
+
         except ValueError:
             logger.warning(
-                "SCAN_AUTHORIZED_USERS contains non-integer values — "
-                "falling back to default"
+                "SCAN_AUTHORIZED_USERS contains invalid values — using fallback"
             )
-    # Fallback: your own Telegram user ID confirmed in Phase 4
+
     return {7094450571}
 
 
 AUTHORIZED_SCAN_USERS: set[int] = _load_authorized_users()
 
+
 # ---------------------------------------------------------------------------
 # Target authorization — what can be scanned
 # ---------------------------------------------------------------------------
 
-# In-memory set — resets on restart (deliberate design choice)
+# Runtime memory storage. Resets when bot restarts.
 AUTHORIZED_SCAN_TARGETS: set[str] = set()
+
+
+logger.info(
+    "AUTH MODULE LOADED | module=%s | auth_set_id=%s",
+    __name__,
+    id(AUTHORIZED_SCAN_TARGETS),
+)
 
 
 def authorize_target(target: str, authorized_by: int) -> bool:
     """
-    Adds a target to the authorized scan set.
-
-    Returns True if newly authorized, False if already present.
-    Always audit-logs the authorization action.
+    Adds target to authorized scan list.
     """
+
     from audit.audit_logger import log_operation
-    normalized = target.strip().lower()
+
+    normalized = extract_hostname(target)
+
     already_present = normalized in AUTHORIZED_SCAN_TARGETS
+
     AUTHORIZED_SCAN_TARGETS.add(normalized)
+
+    logger.info(
+        "DEBUG AUTHORIZE | target=%r | normalized=%r | auth_set=%r | auth_set_id=%s",
+        target,
+        normalized,
+        AUTHORIZED_SCAN_TARGETS,
+        id(AUTHORIZED_SCAN_TARGETS),
+    )
+
     log_operation(
         operation_type="authorization",
         tool_name="auth",
         target=normalized,
         user_id=authorized_by,
-        result_summary="target_authorized" if not already_present else "already_authorized",
+        result_summary=(
+            "target_authorized"
+            if not already_present
+            else "already_authorized"
+        ),
         duration_ms=0,
         success=True,
-        metadata={"authorized_by": authorized_by, "was_new": not already_present},
+        metadata={
+            "authorized_by": authorized_by,
+            "was_new": not already_present,
+        },
     )
+
     logger.info(
-        "Target authorized: %s by user_id=%s", normalized, authorized_by
+        "Target authorized: %s by user_id=%s",
+        normalized,
+        authorized_by,
     )
+
     return not already_present
 
 
 def deauthorize_target(target: str, authorized_by: int) -> bool:
     """
-    Removes a target from the authorized scan set.
-
-    Returns True if removed, False if wasn't present.
+    Removes target from authorized scan list.
     """
+
     from audit.audit_logger import log_operation
-    normalized = target.strip().lower()
+
+    normalized = extract_hostname(target)
+
     was_present = normalized in AUTHORIZED_SCAN_TARGETS
+
     AUTHORIZED_SCAN_TARGETS.discard(normalized)
+
+    logger.info(
+        "DEBUG DEAUTHORIZE | target=%r | normalized=%r | auth_set=%r | auth_set_id=%s",
+        target,
+        normalized,
+        AUTHORIZED_SCAN_TARGETS,
+        id(AUTHORIZED_SCAN_TARGETS),
+    )
+
     log_operation(
         operation_type="authorization",
         tool_name="auth",
         target=normalized,
         user_id=authorized_by,
-        result_summary="target_deauthorized" if was_present else "target_not_found",
+        result_summary=(
+            "target_deauthorized"
+            if was_present
+            else "target_not_found"
+        ),
         duration_ms=0,
         success=True,
-        metadata={"authorized_by": authorized_by},
+        metadata={
+            "authorized_by": authorized_by
+        },
     )
+
     return was_present
 
 
-def is_authorized(user_id: int, target: str) -> tuple[bool, str]:
+def is_authorized(
+    user_id: int,
+    target: str
+) -> tuple[bool, str]:
     """
-    Checks both authorization layers for a proposed scan.
+    Checks user and target authorization.
+    """
 
-    Returns (authorized: bool, reason: str).
-    Reason explains why authorization was denied, or confirms it.
-    """
+    logger.info(
+        "DEBUG USER CHECK | user=%s | allowed_users=%r",
+        user_id,
+        AUTHORIZED_SCAN_USERS,
+    )
+
     if user_id not in AUTHORIZED_SCAN_USERS:
-        return False, f"user_id={user_id} is not in the authorized scanner list"
+        return False, (
+            f"user_id={user_id} is not in the authorized scanner list"
+        )
 
-    normalized = target.strip().lower()
+
+    normalized = extract_hostname(target)
+
+    logger.info(
+        "DEBUG TARGET CHECK | user=%s | target=%r | normalized=%r | auth_set=%r | auth_set_id=%s",
+        user_id,
+        target,
+        normalized,
+        AUTHORIZED_SCAN_TARGETS,
+        id(AUTHORIZED_SCAN_TARGETS),
+    )
+
+
     if normalized not in AUTHORIZED_SCAN_TARGETS:
+
+        logger.warning(
+            "AUTHORIZATION FAILED | normalized=%r not found in auth_set=%r",
+            normalized,
+            AUTHORIZED_SCAN_TARGETS,
+        )
+
         return False, (
             f"target '{target}' has not been authorized for scanning. "
             f"Use /authorize {target} first."
         )
 
-    return True, f"authorized: user={user_id} target={normalized}"
+
+    logger.info(
+        "AUTHORIZATION SUCCESS | user=%s target=%s",
+        user_id,
+        normalized,
+    )
+
+    return True, (
+        f"authorized: user={user_id} target={normalized}"
+    )

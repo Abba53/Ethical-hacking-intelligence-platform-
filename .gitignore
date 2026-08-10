@@ -23,3 +23,6 @@ __pycache__/
 *.swp
 data/audit.jsonl
 data/audit.jsonl
+reports/__pycache__/
+reports/output/
+__pycache__/

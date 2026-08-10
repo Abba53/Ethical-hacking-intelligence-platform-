@@ -16,6 +16,7 @@ import time
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.request import HTTPXRequest
 from collectors.rss_collector import collect_all_feeds, save_entries_to_db
 from collectors.threat_feed_collector import collect_threat_feeds, save_threatfox_to_db, save_chainabuse_to_db
 from extractors.ioc_extractor import process_rss_entries
@@ -29,6 +30,9 @@ from services.active.web_service import WebService
 from services.active.webapp_service import WebAppService
 from scoring.threat_scorer import process_unscored_iocs, get_top_threats
 from workflows.ai_workflow import AIWorkflow
+from analysis.formatting import format_list_item
+from pathlib import Path
+from workflows.report_workflow import ReportWorkflow
 
 # Configure basic logging so we can see what the bot is doing as it runs.
 logging.basicConfig(
@@ -296,7 +300,7 @@ async def walletinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 if desc:
                     lines.append(f"  • {tx_type}: {desc[:50]}")
                 else:
-                    lines.append(f"  • {tx_type}")
+                    lines.append(f"  • {format_list_item(tx_type)}")
 
     await update.message.reply_text("\n".join(lines))
 
@@ -400,7 +404,7 @@ async def authorize_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         )
         return
 
-    target = " ".join(context.args).strip()
+    target = context.args[0].strip()
     is_new = authorize_target(target, authorized_by=user.id)
 
     if is_new:
@@ -488,7 +492,7 @@ async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if subs:
             lines.append(f"Subdomains ({len(subs)}):")
             for s in subs[:10]:
-                lines.append(f"  • {s}")
+                lines.append(f"  • {format_list_item(s)}")
             if len(subs) > 10:
                 lines.append(f"  ... and {len(subs)-10} more")
         else:
@@ -663,17 +667,17 @@ async def aithreat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if report.threat_actor:
         lines.append(f"Threat Actor: {report.threat_actor}")
     if report.mitre_attack:
-        lines.append(f"MITRE ATT&CK: {', '.join(report.mitre_attack)}")
+        lines.append(f"MITRE ATT&CK: {', '.join(format_list_item(x) for x in report.mitre_attack)}")
 
     if report.recommendations:
         lines.append("\nRecommendations:")
         for rec in report.recommendations[:5]:
-            lines.append(f"  • {rec}")
+            lines.append(f"  • {format_list_item(rec)}")
 
     if report.detection_opportunities:
         lines.append("\nDetection Opportunities:")
         for d in report.detection_opportunities[:5]:
-            lines.append(f"  • {d}")
+            lines.append(f"  • {format_list_item(d)}")
 
     await update.message.reply_text("\n".join(lines))
 
@@ -760,22 +764,22 @@ async def aiscan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if report.exposed_assets:
         lines.append("\nExposed Assets:")
         for a in report.exposed_assets[:5]:
-            lines.append(f"  • {a}")
+            lines.append(f"  • {format_list_item(a)}")
 
     if report.entry_points:
         lines.append("\nPossible Entry Points:")
         for e in report.entry_points[:5]:
-            lines.append(f"  • {e}")
+            lines.append(f"  • {format_list_item(e)}")
 
     if report.false_positives:
         lines.append("\nFalse Positives:")
         for fp in report.false_positives[:5]:
-            lines.append(f"  • {fp}")
+            lines.append(f"  • {format_list_item(fp)}")
 
     if report.recommendations:
         lines.append("\nRecommendations:")
         for rec in report.recommendations[:5]:
-            lines.append(f"  • {rec}")
+            lines.append(f"  • {format_list_item(rec)}")
 
     await update.message.reply_text("\n".join(lines))
 
@@ -828,12 +832,12 @@ async def ainetwork_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if report.observations:
         lines.append("\nObservations:")
         for o in report.observations[:5]:
-            lines.append(f"  • {o}")
+            lines.append(f"  • {format_list_item(o)}")
 
     if report.recommendations:
         lines.append("\nRecommendations:")
         for rec in report.recommendations[:5]:
-            lines.append(f"  • {rec}")
+            lines.append(f"  • {format_list_item(rec)}")
 
     await update.message.reply_text("\n".join(lines))
 
@@ -898,22 +902,22 @@ async def aiweb_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if report.findings:
         lines.append("\nFindings:")
         for f in report.findings[:5]:
-            lines.append(f"  • {f}")
+            lines.append(f"  • {format_list_item(f)}")
 
     if report.vulnerabilities:
         lines.append("\nVulnerabilities:")
         for v in report.vulnerabilities[:5]:
-            lines.append(f"  • {v}")
+            lines.append(f"  • {format_list_item(v)}")
 
     if report.misconfigurations:
         lines.append("\nMisconfigurations:")
         for m in report.misconfigurations[:5]:
-            lines.append(f"  • {m}")
+            lines.append(f"  • {format_list_item(m)}")
 
     if report.recommendations:
         lines.append("\nRecommendations:")
         for rec in report.recommendations[:5]:
-            lines.append(f"  • {rec}")
+            lines.append(f"  • {format_list_item(rec)}")
 
     await update.message.reply_text("\n".join(lines))
 
@@ -963,25 +967,25 @@ async def aimalware_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if report.capabilities:
         lines.append("\nCapabilities:")
         for c in report.capabilities[:5]:
-            lines.append(f"  • {c}")
+            lines.append(f"  • {format_list_item(c)}")
 
     if report.indicators_of_compromise:
         lines.append("\nIndicators of Compromise:")
         for ioc in report.indicators_of_compromise[:5]:
-            lines.append(f"  • {ioc}")
+            lines.append(f"  • {format_list_item(ioc)}")
 
     if report.mitre_attack:
-        lines.append(f"\nMITRE ATT&CK: {', '.join(report.mitre_attack)}")
+        lines.append(f"\nMITRE ATT&CK: {', '.join(format_list_item(x) for x in report.mitre_attack)}")
 
     if report.recommendations:
         lines.append("\nRecommendations:")
         for rec in report.recommendations[:5]:
-            lines.append(f"  • {rec}")
+            lines.append(f"  • {format_list_item(rec)}")
 
     if report.detection_opportunities:
         lines.append("\nDetection Opportunities:")
         for d in report.detection_opportunities[:5]:
-            lines.append(f"  • {d}")
+            lines.append(f"  • {format_list_item(d)}")
 
     await update.message.reply_text("\n".join(lines))
 
@@ -1026,14 +1030,92 @@ async def aiexecutive_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if report.priorities:
         lines.append("\nPriorities:")
         for p in report.priorities[:5]:
-            lines.append(f"  • {p}")
+            lines.append(f"  • {format_list_item(p)}")
 
     if report.next_actions:
         lines.append("\nNext Actions:")
         for a in report.next_actions[:5]:
-            lines.append(f"  • {a}")
+            lines.append(f"  • {format_list_item(a)}")
 
     await update.message.reply_text("\n".join(lines))
+
+
+async def fullreport_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """
+    Handles /fullreport <target> — runs a complete security assessment
+    and returns the report as a PDF.
+    """
+
+    user = update.effective_user
+    logger.info("Received /fullreport from user_id=%s", user.id)
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /fullreport <target>\n"
+            "Runs recon, network, web and threat analysis,\n"
+            "then generates an AI executive report.\n\n"
+            "Example:\n"
+            "/fullreport scanme.nmap.org"
+        )
+        return
+
+    target = " ".join(context.args).strip()
+
+    await update.message.reply_text(
+        f"🔄 Running full analysis on {target}...\n"
+        "This may take one or two minutes."
+    )
+
+    try:
+        workflow = ReportWorkflow()
+        wf_result = await workflow.generate(
+            target=target,
+            user_id=user.id,
+        )
+
+        if not wf_result.success:
+            error_msg = (
+                wf_result.errors[0]
+                if wf_result.errors
+                else wf_result.message
+            )
+
+            await update.message.reply_text(
+                f"⚠️ Report generation failed:\n{error_msg}"
+            )
+            return
+
+        document = wf_result.data["document"]
+        pdf_path = wf_result.data["pdf_path"]
+
+        summary = "\n".join(document.splitlines()[:12])
+
+        await update.message.reply_text(
+            "✅ Security assessment completed.\n\n"
+            "Executive Summary:\n\n"
+            f"{summary}"
+        )
+
+        with open(pdf_path, "rb") as pdf_file:
+            await update.message.reply_document(
+                document=pdf_file,
+                filename=Path(pdf_path).name,
+                caption=(
+                    "📄 Cyber Intelligence Security Assessment Report\n"
+                    f"Target: {target}"
+                ),
+            )
+
+    except Exception:
+        logger.exception("Full report generation failed")
+
+        await update.message.reply_text(
+            "⚠️ Something went wrong while generating the report. "
+            "Check the Termux logs for details."
+        )
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1062,7 +1144,19 @@ def main() -> None:
             "TELEGRAM_BOT_TOKEN is not set. Check your .env file."
         )
 
-    application = Application.builder().token(BOT_TOKEN).build()
+    request = HTTPXRequest(
+        connect_timeout=60.0,
+        read_timeout=300.0,
+        write_timeout=300.0,
+        pool_timeout=60.0,
+    )
+
+    application = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .request(request)
+        .build()
+    )
 
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("status", status_command))
@@ -1083,6 +1177,7 @@ def main() -> None:
     application.add_handler(CommandHandler("aiweb", aiweb_command))
     application.add_handler(CommandHandler("aimalware", aimalware_command))
     application.add_handler(CommandHandler("aiexecutive", aiexecutive_command))
+    application.add_handler(CommandHandler("fullreport", fullreport_command))
     application.add_error_handler(error_handler)
 
     logger.info("Bot is starting polling...")
