@@ -21,6 +21,16 @@ class OpenRouterProvider(BaseAIProvider):
         "meta-llama/llama-3.3-70b-instruct",
     )
 
+    # Hard cost/latency ceilings — added to close two gaps found during
+    # Phase 12 API integration review:
+    #   - no cap meant a single call had genuinely open-ended cost
+    #   - no timeout meant a hung request had no cutoff at all
+    # Both are overridable via env vars so they can be tuned without
+    # another code change, matching this codebase's existing pattern
+    # (see OPENROUTER_MODEL above, same style).
+    MAX_TOKENS = int(os.getenv("OPENROUTER_MAX_TOKENS", "1000"))
+    REQUEST_TIMEOUT_SECONDS = float(os.getenv("OPENROUTER_TIMEOUT_SECONDS", "30.0"))
+
     def __init__(self):
         self._client = None
 
@@ -36,6 +46,7 @@ class OpenRouterProvider(BaseAIProvider):
             self._client = AsyncOpenAI(
                 api_key=api_key,
                 base_url="https://openrouter.ai/api/v1",
+                timeout=self.REQUEST_TIMEOUT_SECONDS,          # <-- NEW
             )
 
         return self._client
@@ -54,6 +65,7 @@ class OpenRouterProvider(BaseAIProvider):
                         "content": prompt,
                     }
                 ],
+                max_tokens=self.MAX_TOKENS,                     # <-- NEW
             )
 
             execution_time_ms = int(

@@ -26,3 +26,4 @@ data/audit.jsonl
 reports/__pycache__/
 reports/output/
 __pycache__/
+certs/

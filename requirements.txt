@@ -14,3 +14,12 @@ sgmllib3k==1.0.0
 SQLAlchemy==2.0.51
 typing_extensions==4.15.0
 urllib3==2.7.0
+# Phase 12 — FastAPI backend
+fastapi==0.141.1
+uvicorn[standard]==0.52.3
+pydantic-settings==2.15.0
+# Phase 12 — testing
+pytest==9.1.1
+# Pre-existing dependencies, previously undocumented (found during Phase 12 audit)
+openai==2.53.0
+reportlab==5.0.0
