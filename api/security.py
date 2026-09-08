@@ -47,3 +47,29 @@ async def require_api_key(
         )
 
     return x_api_key
+
+
+async def require_admin_key(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    settings: Settings = Depends(get_settings),
+) -> str:
+    """
+    Stricter dependency for admin-only actions (e.g. granting scan
+    authorization). Checks against settings.admin_api_key_set — a
+    SEPARATE pool from the regular API_KEYS, not a privilege flag on
+    the same key. Raises 403 (not 401): the caller may be a valid
+    regular API user, just not privileged enough for this action.
+    """
+    if not x_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Missing X-API-Key header (admin key required).",
+        )
+
+    if not _constant_time_in(x_api_key, settings.admin_api_key_set):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid or insufficient API key — admin key required.",
+        )
+
+    return x_api_key

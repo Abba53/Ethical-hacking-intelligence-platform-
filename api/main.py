@@ -13,7 +13,7 @@ from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 
 from api.config import get_settings
 from api.routers import ai_analysis, health, iocs, reports, scores, threat_intel   # <-- CHANGED
-
+from api.routers import ai_analysis, health, iocs, reports, scans, scores, threat_intel   # <-- CHANGED
 
 def create_app() -> FastAPI:
     settings = get_settings()
@@ -32,6 +32,7 @@ def create_app() -> FastAPI:
     app.include_router(scores.router)
     app.include_router(ai_analysis.router)
     app.include_router(reports.router)                                            # <-- NEW line
+    app.include_router(scans.router)                                                       # <-- NEW line
 
     return app
 

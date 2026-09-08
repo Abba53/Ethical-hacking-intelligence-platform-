@@ -121,3 +121,103 @@ def test_scores_valid_severity_accepted():
         "/api/v1/scores/top?min_severity=CRITICAL", headers=AUTH_HEADERS
     )
     assert response.status_code == 200
+# ---------------------------------------------------------------------------
+# Admin key — same never-hardcode, read-from-.env pattern as REAL_API_KEY
+# ---------------------------------------------------------------------------
+
+with open(".env") as f:
+    for line in f:
+        if line.startswith("ADMIN_API_KEYS="):
+            REAL_ADMIN_KEY = line.strip().split("=", 1)[1]
+            break
+
+ADMIN_AUTH_HEADERS = {"X-API-Key": REAL_ADMIN_KEY}
+
+
+# ---------------------------------------------------------------------------
+# /api/v1/scans — submit
+# ---------------------------------------------------------------------------
+
+def test_scans_requires_auth():
+    response = client.post("/api/v1/scans", json={})
+    assert response.status_code == 401
+
+
+def test_scans_invalid_action_rejected():
+    response = client.post(
+        "/api/v1/scans",
+        json={"target": "example.com", "scan_type": "recon", "action": "not_real", "user_id": 1},
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 422  # caught by ScanRequest's own model_validator
+
+
+def test_scans_denied_user_returns_structured_response():
+    """
+    Safe to run repeatedly: is_authorized() denies this BEFORE any real
+    subprocess (Nmap/Subfinder/etc.) launches — confirmed by hand, this
+    returns quickly, not after a 60+ second scan timeout.
+    """
+    response = client.post(
+        "/api/v1/scans",
+        json={
+            "target": "example.com", "scan_type": "network_scan",
+            "action": "quick", "user_id": 999999,
+        },
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is False
+    assert "Authorization denied" in body["error"]
+
+
+# ---------------------------------------------------------------------------
+# /api/v1/scans/authorize and /deauthorize — the regular-vs-admin key split
+# This is the exact test that would have caught the real dependency-
+# stacking bug found and fixed this session.
+# ---------------------------------------------------------------------------
+
+def test_authorize_requires_auth():
+    response = client.post("/api/v1/scans/authorize", json={})
+    assert response.status_code == 403  # require_admin_key's own missing-header code
+
+
+def test_authorize_rejects_regular_key():
+    response = client.post(
+        "/api/v1/scans/authorize",
+        json={"target": "test-example.invalid", "authorized_by": 1},
+        headers=AUTH_HEADERS,  # regular key — must NOT work here
+    )
+    assert response.status_code == 403
+
+
+def test_authorize_accepts_admin_key():
+    response = client.post(
+        "/api/v1/scans/authorize",
+        json={"target": "test-example.invalid", "authorized_by": 1},
+        headers=ADMIN_AUTH_HEADERS,
+    )
+    assert response.status_code == 200
+    assert response.json()["target"] == "test-example.invalid"
+
+
+def test_deauthorize_rejects_regular_key():
+    response = client.post(
+        "/api/v1/scans/deauthorize",
+        json={"target": "test-example.invalid", "authorized_by": 1},
+        headers=AUTH_HEADERS,  # regular key — must NOT work here
+    )
+    assert response.status_code == 403
+
+
+def test_deauthorize_accepts_admin_key():
+    # Cleans up the target authorized by test_authorize_accepts_admin_key,
+    # so the test suite doesn't leave permanent state behind in
+    # AUTHORIZED_SCAN_TARGETS between runs.
+    response = client.post(
+        "/api/v1/scans/deauthorize",
+        json={"target": "test-example.invalid", "authorized_by": 1},
+        headers=ADMIN_AUTH_HEADERS,
+    )
+    assert response.status_code == 200
