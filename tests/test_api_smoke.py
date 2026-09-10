@@ -221,3 +221,50 @@ def test_deauthorize_accepts_admin_key():
         headers=ADMIN_AUTH_HEADERS,
     )
     assert response.status_code == 200
+
+# ---------------------------------------------------------------------------
+# /api/v1/lookups
+# ---------------------------------------------------------------------------
+
+def test_lookups_requires_auth():
+    response = client.post("/api/v1/lookups", json={})
+    assert response.status_code == 401
+
+
+def test_lookups_detect_type_succeeds():
+    """
+    Safe to run repeatedly: IOCService.detect_type() is synchronous, local
+    pattern matching only — no external API call, no cost, no rate limit.
+    """
+    response = client.post(
+        "/api/v1/lookups",
+        json={"target": "8.8.8.8", "service": "ioc", "action": "detect_type"},
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["ioc_type"] == "ipv4"
+
+
+def test_lookups_invalid_action_rejected():
+    response = client.post(
+        "/api/v1/lookups",
+        json={"target": "8.8.8.8", "service": "ioc", "action": "not_a_real_action"},
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 422
+
+
+def test_lookups_virustotal_requires_ioc_type():
+    """
+    Confirms the one distinctive validation rule in this router:
+    NetworkService.virustotal()'s real signature requires an extra
+    ioc_type argument the other 8 lookup methods don't take.
+    """
+    response = client.post(
+        "/api/v1/lookups",
+        json={"target": "8.8.8.8", "service": "network", "action": "virustotal"},
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 422
