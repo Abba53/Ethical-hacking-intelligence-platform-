@@ -24,12 +24,12 @@ Future FastAPI migration:
     POST /api/v1/scan/recon/full       {target: str}
 """
 
-import asyncio
 import logging
 
 from audit.audit_logger import log_operation
 from services.active.auth import is_authorized
 from services.base_service import BaseService
+from services.subprocess_runner import run_subprocess
 
 logger = logging.getLogger(__name__)
 
@@ -38,40 +38,6 @@ SUBFINDER_TIMEOUT = 60
 AMASS_TIMEOUT = 180  # Amass is slower — deep DNS enumeration
 
 
-async def _run_subprocess(
-    cmd: list[str], timeout: int
-) -> tuple[int, str, str]:
-    """
-    Runs a CLI command asynchronously.
-
-    Returns (returncode, stdout, stderr).
-    Captures both streams separately so we can log errors without
-    mixing them into the results output.
-    """
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=timeout
-        )
-        return (
-            proc.returncode,
-            stdout.decode("utf-8", errors="replace").strip(),
-            stderr.decode("utf-8", errors="replace").strip(),
-        )
-    except asyncio.TimeoutError:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-        logger.warning("Subprocess timed out: %s", " ".join(cmd[:3]))
-        return -1, "", f"timeout after {timeout}s"
-    except Exception as exc:
-        logger.error("Subprocess error: %s — %s", " ".join(cmd[:3]), exc)
-        return -1, "", str(exc)
 
 
 class ReconService(BaseService):
@@ -113,9 +79,23 @@ class ReconService(BaseService):
                 "-o", "/dev/stdout",
             ]
 
-            returncode, stdout, stderr = await _run_subprocess(
+            returncode, stdout, stderr = await run_subprocess(
                 cmd, SUBFINDER_TIMEOUT
             )
+
+            if returncode == -2:
+                t.result_summary = f"timeout after {SUBFINDER_TIMEOUT}s"
+                t.success = False
+                return self._err(
+                    f"subfinder timed out after {SUBFINDER_TIMEOUT}s"
+                )
+
+            if returncode == -1:
+                t.result_summary = f"execution error: {stderr[:100]}"
+                t.success = False
+                return self._err(
+                    f"subfinder execution failed: {stderr[:200]}"
+                )
 
             if returncode != 0 and not stdout:
                 t.result_summary = f"error: {stderr[:100]}"
@@ -173,9 +153,23 @@ class ReconService(BaseService):
                 "-o", "/dev/stdout",
             ]
 
-            returncode, stdout, stderr = await _run_subprocess(
+            returncode, stdout, stderr = await run_subprocess(
                 cmd, AMASS_TIMEOUT
             )
+
+            if returncode == -2:
+                t.result_summary = f"timeout after {AMASS_TIMEOUT}s"
+                t.success = False
+                return self._err(
+                    f"amass timed out after {AMASS_TIMEOUT}s"
+                )
+
+            if returncode == -1:
+                t.result_summary = f"execution error: {stderr[:100]}"
+                t.success = False
+                return self._err(
+                    f"amass execution failed: {stderr[:200]}"
+                )
 
             if returncode != 0 and not stdout:
                 t.result_summary = f"error: {stderr[:100]}"

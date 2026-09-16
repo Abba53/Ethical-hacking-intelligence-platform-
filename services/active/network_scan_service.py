@@ -29,7 +29,7 @@ import re
 
 from audit.audit_logger import log_operation
 from services.active.auth import is_authorized
-from services.active.recon_service import _run_subprocess
+from services.subprocess_runner import run_subprocess
 from services.base_service import BaseService
 
 logger = logging.getLogger(__name__)
@@ -132,7 +132,21 @@ class NetworkScanService(BaseService):
         with self.audit_timer(target, user_id) as t:
             t.metadata["profile"] = profile
 
-            returncode, stdout, stderr = await _run_subprocess(cmd, timeout)
+            returncode, stdout, stderr = await run_subprocess(cmd, timeout)
+
+            if returncode == -2:
+                t.result_summary = f"timeout after {timeout}s"
+                t.success = False
+                return self._err(
+                    f"nmap timed out after {timeout}s"
+                )
+
+            if returncode == -1:
+                t.result_summary = f"execution error: {stderr[:100]}"
+                t.success = False
+                return self._err(
+                    f"nmap execution failed: {stderr[:200]}"
+                )
 
             if returncode != 0 and not stdout:
                 t.result_summary = f"error: {stderr[:100]}"

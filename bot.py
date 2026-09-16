@@ -1093,11 +1093,23 @@ async def fullreport_command(
 
         summary = "\n".join(document.splitlines()[:12])
 
-        await update.message.reply_text(
+        message = (
             "✅ Security assessment completed.\n\n"
             "Executive Summary:\n\n"
             f"{summary}"
         )
+
+        # wf_result.errors is already populated by ReportWorkflow for any
+        # stage that failed or was authorization-denied (recon, network_scan,
+        # network, web, executive summary) — previously generated but never
+        # shown to the user when the overall report still succeeded.
+        if wf_result.errors:
+            message += (
+                "\n\n⚠️ Note: some sections were unavailable:\n"
+                + "\n".join(f"• {err}" for err in wf_result.errors)
+            )
+
+        await update.message.reply_text(message)
 
         with open(pdf_path, "rb") as pdf_file:
             await update.message.reply_document(

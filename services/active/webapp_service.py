@@ -27,7 +27,7 @@ import os
 
 from audit.audit_logger import log_operation
 from services.active.auth import is_authorized
-from services.active.recon_service import _run_subprocess
+from services.subprocess_runner import run_subprocess
 from services.base_service import BaseService
 
 logger = logging.getLogger(__name__)
@@ -124,7 +124,21 @@ class WebAppService(BaseService):
 
         with self.audit_timer(target, user_id) as t:
             t.metadata["tool"] = "ffuf"
-            returncode, stdout, stderr = await _run_subprocess(cmd, FFUF_TIMEOUT)
+            returncode, stdout, stderr = await run_subprocess(cmd, FFUF_TIMEOUT)
+
+            if returncode == -2:
+                t.result_summary = f"timeout after {FFUF_TIMEOUT}s"
+                t.success = False
+                return self._err(
+                    f"ffuf timed out after {FFUF_TIMEOUT}s"
+                )
+
+            if returncode == -1:
+                t.result_summary = f"execution error: {stderr[:100]}"
+                t.success = False
+                return self._err(
+                    f"ffuf execution failed: {stderr[:200]}"
+                )
 
             if returncode not in (0, 1) and not stdout:
                 t.result_summary = f"error: {stderr[:100]}"
@@ -185,7 +199,21 @@ class WebAppService(BaseService):
 
         with self.audit_timer(target_url, user_id) as t:
             t.metadata["tool"] = "sqlmap"
-            returncode, stdout, stderr = await _run_subprocess(cmd, SQLMAP_TIMEOUT)
+            returncode, stdout, stderr = await run_subprocess(cmd, SQLMAP_TIMEOUT)
+
+            if returncode == -2:
+                t.result_summary = f"timeout after {SQLMAP_TIMEOUT}s"
+                t.success = False
+                return self._err(
+                    f"sqlmap timed out after {SQLMAP_TIMEOUT}s"
+                )
+
+            if returncode == -1:
+                t.result_summary = f"execution error: {stderr[:100]}"
+                t.success = False
+                return self._err(
+                    f"sqlmap execution failed: {stderr[:200]}"
+                )
 
             if returncode not in (0, 1) and not stdout:
                 t.result_summary = f"error: {stderr[:100]}"
