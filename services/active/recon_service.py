@@ -23,7 +23,7 @@ Future FastAPI migration:
     POST /api/v1/scan/recon/amass      {target: str}
     POST /api/v1/scan/recon/full       {target: str}
 """
-
+import asyncio
 import logging
 
 from audit.audit_logger import log_operation
@@ -234,6 +234,24 @@ class ReconService(BaseService):
             )
 
             all_subs = sorted(sf_subs | am_subs)
+
+            # Both tools failing (timeout, execution error, etc.) is a
+            # genuine failure of full_recon itself — previously this was
+            # silently reported as success with an empty, misleadingly
+            # "clean" result, indistinguishable from a real zero-subdomain
+            # finding. Only report success when at least one tool
+            # actually produced a real result.
+            if not sf_result["success"] and not am_result["success"]:
+                t.result_summary = (
+                    f"both tools failed: subfinder={sf_result['error']} "
+                    f"amass={am_result['error']}"
+                )
+                t.success = False
+                return self._err(
+                    f"full_recon failed: subfinder error: {sf_result['error']}; "
+                    f"amass error: {am_result['error']}"
+                )
+
             t.result_summary = (
                 f"subfinder={len(sf_subs)} amass={len(am_subs)} "
                 f"unique={len(all_subs)}"
@@ -253,4 +271,4 @@ class ReconService(BaseService):
                 "amass_count": len(am_subs),
             },
             summary=t.result_summary,
-        )
+        )    
