@@ -1045,8 +1045,13 @@ async def fullreport_command(
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
     """
-    Handles /fullreport <target> — runs a complete security assessment
-    and returns the report as a PDF.
+    Handles /fullreport <target> — queues a complete security assessment
+    and returns immediately. The actual work runs in the background via
+    JobQueue, so this command never blocks the bot's update loop for the
+    multiple minutes a full assessment can take (confirmed by real
+    observation: a single run took 6+ minutes, including a 120s nuclei
+    timeout). Results are delivered as a new message when ready, via
+    _fullreport_job below.
     """
 
     user = update.effective_user
@@ -1065,15 +1070,44 @@ async def fullreport_command(
     target = " ".join(context.args).strip()
 
     await update.message.reply_text(
-        f"🔄 Running full analysis on {target}...\n"
-        "This may take one or two minutes."
+        f"🔄 Queued full analysis on {target}.\n"
+        "This can take a few minutes — I'll message you here when it's ready."
     )
+
+    context.job_queue.run_once(
+        _fullreport_job,
+        when=0,
+        data={
+            "target": target,
+            "user_id": user.id,
+            "chat_id": update.effective_chat.id,
+        },
+        name=f"fullreport:{user.id}:{target}",
+    )
+
+
+async def _fullreport_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Background job that does the actual full-report work, scheduled by
+    fullreport_command via context.job_queue.run_once(). Runs on the
+    bot's own event loop, outside any single update's handler, so it
+    never blocks other commands/users while it runs.
+
+    Identical logic to the original inline fullreport_command body —
+    only the delivery mechanism changed (context.bot.send_* by chat_id,
+    since there is no `update` object available inside a scheduled job).
+    """
+
+    data = context.job.data
+    target = data["target"]
+    user_id = data["user_id"]
+    chat_id = data["chat_id"]
 
     try:
         workflow = ReportWorkflow()
         wf_result = await workflow.generate(
             target=target,
-            user_id=user.id,
+            user_id=user_id,
         )
 
         if not wf_result.success:
@@ -1083,8 +1117,9 @@ async def fullreport_command(
                 else wf_result.message
             )
 
-            await update.message.reply_text(
-                f"⚠️ Report generation failed:\n{error_msg}"
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"⚠️ Report generation failed:\n{error_msg}",
             )
             return
 
@@ -1099,20 +1134,17 @@ async def fullreport_command(
             f"{summary}"
         )
 
-        # wf_result.errors is already populated by ReportWorkflow for any
-        # stage that failed or was authorization-denied (recon, network_scan,
-        # network, web, executive summary) — previously generated but never
-        # shown to the user when the overall report still succeeded.
         if wf_result.errors:
             message += (
                 "\n\n⚠️ Note: some sections were unavailable:\n"
                 + "\n".join(f"• {err}" for err in wf_result.errors)
             )
 
-        await update.message.reply_text(message)
+        await context.bot.send_message(chat_id=chat_id, text=message)
 
         with open(pdf_path, "rb") as pdf_file:
-            await update.message.reply_document(
+            await context.bot.send_document(
+                chat_id=chat_id,
                 document=pdf_file,
                 filename=Path(pdf_path).name,
                 caption=(
@@ -1124,9 +1156,12 @@ async def fullreport_command(
     except Exception:
         logger.exception("Full report generation failed")
 
-        await update.message.reply_text(
-            "⚠️ Something went wrong while generating the report. "
-            "Check the Termux logs for details."
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                "⚠️ Something went wrong while generating the report. "
+                "Check the Termux logs for details."
+            ),
         )
 
 
