@@ -1,13 +1,42 @@
 import asyncio
 import json
 import os
-from dotenv import load_dotenv
-
-load_dotenv(
-    "/data/data/com.termux/files/home/ethical-hacking-intel-platform/.env"
-)
+import pytest
 
 from analysis.ai_analysis import AIAnalyst
+from analysis.models.ai_response import AIResponse
+
+
+class StubProvider:
+    provider_name = "stub"
+    model_name = "test-model"
+
+    async def analyze(self, prompt: str) -> AIResponse:
+        return AIResponse(
+            success=True,
+            provider=self.provider_name,
+            report_type="",
+            analysis=self._response_for(prompt),
+            raw_response=self._response_for(prompt),
+            execution_time_ms=1,
+        )
+
+    @staticmethod
+    def _response_for(prompt: str) -> str:
+        if "executive" in prompt.lower():
+            return '{"summary":"Test executive summary","risk_level":"medium","key_findings":[],"recommendations":[]}'
+        if "campaign" in prompt.lower():
+            return '{"summary":"Test campaign analysis","iocs":[],"ttps":[],"attribution":"unknown","confidence":"low"}'
+        if "network" in prompt.lower():
+            return '{"summary":"Test network analysis","open_ports":[],"services":[],"risks":[],"recommendations":[]}'
+        return '{"summary":"Test analysis","findings":[],"recommendations":[]}'
+
+
+@pytest.fixture
+def ai():
+    analyst = AIAnalyst.__new__(AIAnalyst)
+    analyst.provider = StubProvider()
+    return analyst
 
 
 PASS = 0

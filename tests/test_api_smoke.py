@@ -10,22 +10,16 @@ Run with:
     pytest tests/test_api_smoke.py -v
 """
 
-import os
-
 from fastapi.testclient import TestClient
 
+from api.config import get_settings
 from api.main import app
 
 client = TestClient(app)
 
-# Read the real key the same way our manual curl commands have all
-# session — from .env, never hard-coded, never printed.
-with open(".env") as f:
-    for line in f:
-        if line.startswith("API_KEYS="):
-            REAL_API_KEY = line.strip().split("=", 1)[1]
-            break
+settings = get_settings()
 
+REAL_API_KEY = next(iter(settings.api_key_set), "")
 AUTH_HEADERS = {"X-API-Key": REAL_API_KEY}
 
 
@@ -122,15 +116,10 @@ def test_scores_valid_severity_accepted():
     )
     assert response.status_code == 200
 # ---------------------------------------------------------------------------
-# Admin key — same never-hardcode, read-from-.env pattern as REAL_API_KEY
+# Admin key — obtain it from validated application settings.
 # ---------------------------------------------------------------------------
 
-with open(".env") as f:
-    for line in f:
-        if line.startswith("ADMIN_API_KEYS="):
-            REAL_ADMIN_KEY = line.strip().split("=", 1)[1]
-            break
-
+REAL_ADMIN_KEY = next(iter(settings.admin_api_key_set), "")
 ADMIN_AUTH_HEADERS = {"X-API-Key": REAL_ADMIN_KEY}
 
 

@@ -42,7 +42,7 @@ class Settings(BaseSettings):
 
     # --- App metadata ---
     APP_NAME: str = "Ethical Hacking Intelligence Automation Platform API"
-    APP_ENV: str = Field(default="development")  # development | staging | production
+    APP_ENV: str = Field(default="development", validation_alias="ENVIRONMENT")  # development | staging | production
     API_VERSION: str = "12.0.0"
     DEBUG: bool = False
 
@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     TRUST_PROXY_HEADERS: bool = False
 
     # --- Database (Phase 6/7 SQLite layer) ---
-    DATABASE_PATH: str = str(BASE_DIR / "data" / "platform.db")
+    DATABASE_URL: str = "sqlite:///data/platform.db"
 
     # --- Auth (Phase 12.6) ---
     API_KEYS: str = Field(default="")
