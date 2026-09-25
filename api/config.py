@@ -62,6 +62,8 @@ class Settings(BaseSettings):
     # --- Auth (Phase 12.6) ---
     API_KEYS: str = Field(default="")
     ADMIN_API_KEYS: str = Field(default="")
+    API_KEY_IDENTITIES: str = Field(default="")
+    ADMIN_API_KEY_IDENTITIES: str = Field(default="")
 
     # --- Rate limiting (Phase 12.13) ---
     RATE_LIMIT_PER_MINUTE: int = 60
@@ -91,6 +93,42 @@ class Settings(BaseSettings):
             raise ValueError(f"APP_ENV must be one of {allowed}, got {v!r}")
         return v
 
+    @staticmethod
+    def _parse_identity_mapping(
+        raw: str,
+        key_count: int,
+    ) -> list[int]:
+        """Parse comma-separated Telegram identities aligned with API-key order."""
+        if not raw.strip():
+            return []
+
+        identities: list[int] = []
+        for item in raw.split(","):
+            item = item.strip()
+            if not item:
+                continue
+
+            try:
+                user_id = int(item)
+            except ValueError:
+                raise ValueError(
+                    "Identity mappings must contain positive Telegram user IDs."
+                ) from None
+
+            if user_id <= 0:
+                raise ValueError(
+                    "Identity mapping user IDs must be positive integers."
+                )
+
+            identities.append(user_id)
+
+        if len(identities) != key_count:
+            raise ValueError(
+                "Identity mapping count must exactly match the corresponding API-key count."
+            )
+
+        return identities
+
     @property
     def api_key_set(self) -> set[str]:
         return {k.strip() for k in self.API_KEYS.split(",") if k.strip()}
@@ -98,6 +136,25 @@ class Settings(BaseSettings):
     @property
     def admin_api_key_set(self) -> set[str]:
         return {k.strip() for k in self.ADMIN_API_KEYS.split(",") if k.strip()}
+
+    @property
+    def api_key_identity_map(self) -> dict[str, int]:
+        keys = [k.strip() for k in self.API_KEYS.split(",") if k.strip()]
+        identities = self._parse_identity_mapping(
+            self.API_KEY_IDENTITIES,
+            len(keys),
+        )
+        return dict(zip(keys, identities))
+
+    @property
+    def admin_api_key_identity_map(self) -> dict[str, int]:
+        keys = [k.strip() for k in self.ADMIN_API_KEYS.split(",") if k.strip()]
+        identities = self._parse_identity_mapping(
+            self.ADMIN_API_KEY_IDENTITIES,
+            len(keys),
+        )
+        return dict(zip(keys, identities))
+
 
     @property
     def cors_origin_list(self) -> List[str]:

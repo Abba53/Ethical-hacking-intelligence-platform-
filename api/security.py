@@ -73,3 +73,71 @@ async def require_admin_key(
         )
 
     return x_api_key
+
+
+def resolve_api_key_identity(
+    api_key: str,
+    settings: Settings,
+) -> int:
+    """Resolve a regular authenticated API key to its configured Telegram identity."""
+    try:
+        return settings.api_key_identity_map[api_key]
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="API key has no configured scanner identity.",
+        ) from None
+
+
+def resolve_admin_key_identity(
+    api_key: str,
+    settings: Settings,
+) -> int:
+    """Resolve an admin authenticated API key to its configured Telegram identity."""
+    try:
+        return settings.admin_api_key_identity_map[api_key]
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin API key has no configured identity.",
+        ) from None
+
+
+async def require_api_key_identity(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    settings: Settings = Depends(get_settings),
+) -> int:
+    """Authenticate a regular API key and return its configured identity."""
+    if not x_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing X-API-Key header.",
+        )
+
+    if not _constant_time_in(x_api_key, settings.api_key_set):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key.",
+        )
+
+    return resolve_api_key_identity(x_api_key, settings)
+
+
+async def require_admin_key_identity(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    settings: Settings = Depends(get_settings),
+) -> int:
+    """Authenticate an admin API key and return its configured identity."""
+    if not x_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Missing X-API-Key header (admin key required).",
+        )
+
+    if not _constant_time_in(x_api_key, settings.admin_api_key_set):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid or insufficient API key — admin key required.",
+        )
+
+    return resolve_admin_key_identity(x_api_key, settings)

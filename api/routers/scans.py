@@ -64,7 +64,7 @@ from api.schemas.scan import (
     ScanResultOut,
     ScanType,
 )
-from api.security import require_admin_key, require_api_key
+from api.security import require_admin_key_identity, require_api_key_identity
 
 logger = logging.getLogger(__name__)
 
@@ -201,10 +201,9 @@ def _normalize_workflow_result(result: Any) -> dict[str, Any]:
 # Dispatch
 # ---------------------------------------------------------------------------
 
-async def _dispatch(payload: ScanRequest) -> dict[str, Any]:
+async def _dispatch(payload: ScanRequest, user_id: int) -> dict[str, Any]:
     target = _validate_target(payload.target)
     action = _validate_action(payload.scan_type, payload.action)
-    user_id = payload.user_id
     options = payload.options or {}
 
     if payload.scan_type == ScanType.RECON:
@@ -253,9 +252,11 @@ async def _dispatch(payload: ScanRequest) -> dict[str, Any]:
 @router.post(
     "",
     response_model=ScanResultOut,
-    dependencies=[Depends(require_api_key)],  # regular key ONLY — see security model #1
 )
-async def submit_scan(payload: ScanRequest):
+async def submit_scan(
+    payload: ScanRequest,
+    user_id: int = Depends(require_api_key_identity),
+):
     """
     Runs a REAL active scan against a target. is_authorized() inside the
     real service decides whether it actually executes — a denial is a
@@ -263,7 +264,7 @@ async def submit_scan(payload: ScanRequest):
     """
     try:
         async with _scan_semaphore:
-            result = await _dispatch(payload)
+            result = await _dispatch(payload, user_id)
     except HTTPException:
         raise
     except asyncio.CancelledError:
@@ -292,14 +293,16 @@ async def submit_scan(payload: ScanRequest):
 @router.post(
     "/authorize",
     response_model=AuthorizeTargetResponse,
-    dependencies=[Depends(require_admin_key)],  # admin key ONLY
 )
-async def authorize(payload: AuthorizeTargetRequest):
+async def authorize(
+    payload: AuthorizeTargetRequest,
+    authorized_by: int = Depends(require_admin_key_identity),
+):
     """Maps directly to services.active.auth.authorize_target(target, authorized_by)."""
     from services.active.auth import authorize_target
 
     target = _validate_target(payload.target)
-    was_new = authorize_target(target, payload.authorized_by)
+    was_new = authorize_target(target, authorized_by)
     return AuthorizeTargetResponse(
         target=target,
         was_new=was_new,
@@ -310,14 +313,16 @@ async def authorize(payload: AuthorizeTargetRequest):
 @router.post(
     "/deauthorize",
     response_model=AuthorizeTargetResponse,
-    dependencies=[Depends(require_admin_key)],  # admin key ONLY
 )
-async def deauthorize(payload: AuthorizeTargetRequest):
+async def deauthorize(
+    payload: AuthorizeTargetRequest,
+    authorized_by: int = Depends(require_admin_key_identity),
+):
     """Maps directly to services.active.auth.deauthorize_target(target, authorized_by)."""
     from services.active.auth import deauthorize_target
 
     target = _validate_target(payload.target)
-    was_present = deauthorize_target(target, payload.authorized_by)
+    was_present = deauthorize_target(target, authorized_by)
     return AuthorizeTargetResponse(
         target=target,
         was_new=was_present,

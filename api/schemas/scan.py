@@ -10,11 +10,10 @@ signatures/parameters read directly from:
     services/active/network_scan_service.py
     services/active/web_service.py
 
-user_id is required for every active scan type — it is NOT proof of
-authorization itself. is_authorized(user_id, target) runs INSIDE the
-real service methods (services/active/auth.py) and can still deny the
-request; this schema only guarantees the request is well-formed enough
-to reach that real check.
+user_id is derived server-side from the authenticated API key.
+It is never accepted from the request body. The resolved identity is
+passed into the real service methods, where is_authorized(user_id, target)
+performs the active-scan authorization check.
 """
 
 from __future__ import annotations
@@ -55,12 +54,11 @@ ACTIONS_BY_SCAN_TYPE: dict[ScanType, set[str]] = {
 
 
 class ScanRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
     target: str = Field(..., min_length=1, max_length=512)
     scan_type: ScanType
     action: str
-    user_id: int = Field(
-        ..., description="Telegram user ID checked by is_authorized() inside the real service."
-    )
     options: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -85,8 +83,9 @@ class ScanResultOut(BaseModel):
 
 
 class AuthorizeTargetRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
     target: str = Field(..., min_length=1, max_length=512)
-    authorized_by: int
 
 
 class AuthorizeTargetResponse(BaseModel):

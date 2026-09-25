@@ -135,30 +135,54 @@ def test_scans_requires_auth():
 def test_scans_invalid_action_rejected():
     response = client.post(
         "/api/v1/scans",
-        json={"target": "example.com", "scan_type": "recon", "action": "not_real", "user_id": 1},
+        json={"target": "example.com", "scan_type": "recon", "action": "not_real"},
         headers=AUTH_HEADERS,
     )
     assert response.status_code == 422  # caught by ScanRequest's own model_validator
 
 
-def test_scans_denied_user_returns_structured_response():
-    """
-    Safe to run repeatedly: is_authorized() denies this BEFORE any real
-    subprocess (Nmap/Subfinder/etc.) launches — confirmed by hand, this
-    returns quickly, not after a 60+ second scan timeout.
-    """
+def test_scans_rejects_client_supplied_identity():
     response = client.post(
         "/api/v1/scans",
         json={
-            "target": "example.com", "scan_type": "network_scan",
-            "action": "quick", "user_id": 999999,
+            "target": "example.com",
+            "scan_type": "network_scan",
+            "action": "quick",
+            "user_id": 999999,
         },
         headers=AUTH_HEADERS,
     )
+    assert response.status_code == 422
+
+
+def test_scans_uses_authenticated_api_identity(monkeypatch):
+    import api.routers.scans as scans_router
+
+    captured = {}
+
+    async def fake_dispatch(payload, user_id):
+        captured["user_id"] = user_id
+        return {
+            "success": True,
+            "data": {},
+            "summary": "identity-test",
+        }
+
+    monkeypatch.setattr(scans_router, "_dispatch", fake_dispatch)
+
+    response = client.post(
+        "/api/v1/scans",
+        json={
+            "target": "example.com",
+            "scan_type": "network_scan",
+            "action": "quick",
+        },
+        headers=AUTH_HEADERS,
+    )
+
     assert response.status_code == 200
-    body = response.json()
-    assert body["success"] is False
-    assert "Authorization denied" in body["error"]
+    assert captured["user_id"] == settings.api_key_identity_map[REAL_API_KEY]
+
 
 
 # ---------------------------------------------------------------------------
@@ -175,16 +199,25 @@ def test_authorize_requires_auth():
 def test_authorize_rejects_regular_key():
     response = client.post(
         "/api/v1/scans/authorize",
-        json={"target": "test-example.invalid", "authorized_by": 1},
+        json={"target": "test-example.invalid"},
         headers=AUTH_HEADERS,  # regular key — must NOT work here
     )
     assert response.status_code == 403
 
 
+def test_authorize_rejects_client_supplied_identity():
+    response = client.post(
+        "/api/v1/scans/authorize",
+        json={"target": "test-example.invalid", "authorized_by": 999999},
+        headers=ADMIN_AUTH_HEADERS,
+    )
+    assert response.status_code == 422
+
+
 def test_authorize_accepts_admin_key():
     response = client.post(
         "/api/v1/scans/authorize",
-        json={"target": "test-example.invalid", "authorized_by": 1},
+        json={"target": "test-example.invalid"},
         headers=ADMIN_AUTH_HEADERS,
     )
     assert response.status_code == 200
@@ -194,7 +227,7 @@ def test_authorize_accepts_admin_key():
 def test_deauthorize_rejects_regular_key():
     response = client.post(
         "/api/v1/scans/deauthorize",
-        json={"target": "test-example.invalid", "authorized_by": 1},
+        json={"target": "test-example.invalid"},
         headers=AUTH_HEADERS,  # regular key — must NOT work here
     )
     assert response.status_code == 403
@@ -206,7 +239,7 @@ def test_deauthorize_accepts_admin_key():
     # AUTHORIZED_SCAN_TARGETS between runs.
     response = client.post(
         "/api/v1/scans/deauthorize",
-        json={"target": "test-example.invalid", "authorized_by": 1},
+        json={"target": "test-example.invalid"},
         headers=ADMIN_AUTH_HEADERS,
     )
     assert response.status_code == 200
