@@ -23,18 +23,17 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from api.schemas.lookup import LookupRequest, LookupResultOut, LookupService
-from api.security import require_api_key
+from api.security import require_api_key_identity
 
 router = APIRouter(
     prefix="/api/v1/lookups",
     tags=["lookups"],
-    dependencies=[Depends(require_api_key)],
 )
 
 
-async def _dispatch(payload: LookupRequest) -> dict[str, Any]:
-    target, action, user_id, options = (
-        payload.target, payload.action, payload.user_id, payload.options,
+async def _dispatch(payload: LookupRequest, user_id: int) -> dict[str, Any]:
+    target, action, options = (
+        payload.target, payload.action, payload.options,
     )
 
     if payload.service == LookupService.IOC:
@@ -81,7 +80,10 @@ async def _dispatch(payload: LookupRequest) -> dict[str, Any]:
 
 
 @router.post("", response_model=LookupResultOut)
-async def submit_lookup(payload: LookupRequest):
+async def submit_lookup(
+    payload: LookupRequest,
+    user_id: int = Depends(require_api_key_identity),
+):
     """
     Runs a REAL passive lookup (local DB + Chainabuse for IOC; IP geo/
     AbuseIPDB/VirusTotal for network; Ethplorer/Helius for blockchain).
@@ -89,7 +91,7 @@ async def submit_lookup(payload: LookupRequest):
     requires_authorization = False.
     """
     try:
-        result = await _dispatch(payload)
+        result = await _dispatch(payload, user_id)
     except HTTPException:
         raise
     except Exception:

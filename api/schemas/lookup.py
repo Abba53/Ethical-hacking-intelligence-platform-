@@ -41,10 +41,11 @@ ACTIONS_BY_SERVICE: dict[LookupService, set[str]] = {
 
 
 class LookupRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
     target: str = Field(..., min_length=1, max_length=512)
     service: LookupService
     action: str
-    user_id: int | str = Field(default="system")
     # Only used by service=network, action=virustotal, which requires an
     # extra ioc_type argument the other 8 methods don't take.
     options: dict[str, Any] = Field(default_factory=dict)

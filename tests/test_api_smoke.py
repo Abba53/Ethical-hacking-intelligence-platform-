@@ -253,6 +253,49 @@ def test_lookups_requires_auth():
     assert response.status_code == 401
 
 
+def test_lookups_rejects_client_supplied_identity():
+    response = client.post(
+        "/api/v1/lookups",
+        json={
+            "target": "8.8.8.8",
+            "service": "ioc",
+            "action": "detect_type",
+            "user_id": 999999,
+        },
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 422
+
+
+def test_lookups_uses_authenticated_api_identity(monkeypatch):
+    import api.routers.lookups as lookups_router
+
+    captured = {}
+
+    async def fake_dispatch(payload, user_id):
+        captured["user_id"] = user_id
+        return {
+            "success": True,
+            "data": {"ioc_type": "ipv4"},
+            "summary": "identity-test",
+        }
+
+    monkeypatch.setattr(lookups_router, "_dispatch", fake_dispatch)
+
+    response = client.post(
+        "/api/v1/lookups",
+        json={
+            "target": "8.8.8.8",
+            "service": "ioc",
+            "action": "detect_type",
+        },
+        headers=AUTH_HEADERS,
+    )
+
+    assert response.status_code == 200
+    assert captured["user_id"] == settings.api_key_identity_map[REAL_API_KEY]
+
+
 def test_lookups_detect_type_succeeds():
     """
     Safe to run repeatedly: IOCService.detect_type() is synchronous, local
