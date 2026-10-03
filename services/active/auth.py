@@ -34,7 +34,7 @@ load_dotenv()
 def _load_authorized_users() -> set[int]:
     """
     Loads authorized Telegram user IDs from environment.
-    Falls back to known user ID if env variable is missing.
+    Fails closed when the environment variable is missing or invalid.
     """
     raw = os.getenv("SCAN_AUTHORIZED_USERS", "")
 
@@ -55,10 +55,10 @@ def _load_authorized_users() -> set[int]:
 
         except ValueError:
             logger.warning(
-                "SCAN_AUTHORIZED_USERS contains invalid values — using fallback"
+                "SCAN_AUTHORIZED_USERS contains invalid values — denying scanner access"
             )
 
-    return {7094450571}
+    return set()
 
 
 AUTHORIZED_SCAN_USERS: set[int] = _load_authorized_users()
@@ -70,6 +70,11 @@ AUTHORIZED_SCAN_USERS: set[int] = _load_authorized_users()
 
 # Runtime memory storage. Resets when bot restarts.
 AUTHORIZED_SCAN_TARGETS: set[str] = set()
+
+# Runtime per-user/per-target grants.
+# Each grant allows one specific user to scan one specific globally
+# authorized target. Resets when the process restarts.
+AUTHORIZED_SCAN_GRANTS: set[tuple[int, str]] = set()
 
 
 logger.info(
@@ -127,6 +132,96 @@ def authorize_target(target: str, authorized_by: int) -> bool:
     return not already_present
 
 
+def grant_scan_access(user_id: int, target: str, granted_by: int) -> bool:
+    """
+    Grant one specific user permission to scan one globally authorized target.
+    Returns True when a new grant was created.
+    """
+    from audit.audit_logger import log_operation
+
+    normalized = extract_hostname(target)
+
+    if normalized not in AUTHORIZED_SCAN_TARGETS:
+        logger.warning(
+            "GRANT DENIED | target=%r normalized=%r is not globally authorized",
+            target,
+            normalized,
+        )
+        return False
+
+    grant = (int(user_id), normalized)
+    already_present = grant in AUTHORIZED_SCAN_GRANTS
+    AUTHORIZED_SCAN_GRANTS.add(grant)
+
+    log_operation(
+        operation_type="authorization",
+        tool_name="auth",
+        target=normalized,
+        user_id=granted_by,
+        result_summary=(
+            "scan_access_granted"
+            if not already_present
+            else "scan_access_already_granted"
+        ),
+        duration_ms=0,
+        success=True,
+        metadata={
+            "granted_by": granted_by,
+            "granted_user_id": int(user_id),
+            "was_new": not already_present,
+        },
+    )
+
+    logger.info(
+        "Scan access granted | user_id=%s target=%s by admin=%s",
+        user_id,
+        normalized,
+        granted_by,
+    )
+
+    return not already_present
+
+
+def revoke_scan_access(user_id: int, target: str, revoked_by: int) -> bool:
+    """
+    Revoke one specific user's permission for one target.
+    Returns True when an existing grant was removed.
+    """
+    from audit.audit_logger import log_operation
+
+    normalized = extract_hostname(target)
+    grant = (int(user_id), normalized)
+    was_present = grant in AUTHORIZED_SCAN_GRANTS
+    AUTHORIZED_SCAN_GRANTS.discard(grant)
+
+    log_operation(
+        operation_type="authorization",
+        tool_name="auth",
+        target=normalized,
+        user_id=revoked_by,
+        result_summary=(
+            "scan_access_revoked"
+            if was_present
+            else "scan_access_grant_not_found"
+        ),
+        duration_ms=0,
+        success=True,
+        metadata={
+            "revoked_by": revoked_by,
+            "revoked_user_id": int(user_id),
+        },
+    )
+
+    logger.info(
+        "Scan access revoked | user_id=%s target=%s by admin=%s",
+        user_id,
+        normalized,
+        revoked_by,
+    )
+
+    return was_present
+
+
 def deauthorize_target(target: str, authorized_by: int) -> bool:
     """
     Removes target from authorized scan list.
@@ -168,58 +263,63 @@ def deauthorize_target(target: str, authorized_by: int) -> bool:
     return was_present
 
 
-def is_authorized(
-    user_id: int,
-    target: str
-) -> tuple[bool, str]:
+def is_authorized(user_id: int, target: str) -> tuple[bool, str]:
     """
-    Checks user and target authorization.
+    Checks target authorization plus either global user authorization
+    or an explicit per-user/per-target grant.
     """
-
-    logger.info(
-        "DEBUG USER CHECK | user=%s | allowed_users=%r",
-        user_id,
-        AUTHORIZED_SCAN_USERS,
-    )
-
-    if user_id not in AUTHORIZED_SCAN_USERS:
-        return False, (
-            f"user_id={user_id} is not in the authorized scanner list"
-        )
-
-
     normalized = extract_hostname(target)
 
     logger.info(
-        "DEBUG TARGET CHECK | user=%s | target=%r | normalized=%r | auth_set=%r | auth_set_id=%s",
+        "DEBUG AUTH CHECK | user=%s | target=%r | normalized=%r | "
+        "global_users=%r | grants=%r | targets=%r",
         user_id,
         target,
         normalized,
+        AUTHORIZED_SCAN_USERS,
+        AUTHORIZED_SCAN_GRANTS,
         AUTHORIZED_SCAN_TARGETS,
-        id(AUTHORIZED_SCAN_TARGETS),
     )
 
-
     if normalized not in AUTHORIZED_SCAN_TARGETS:
-
         logger.warning(
             "AUTHORIZATION FAILED | normalized=%r not found in auth_set=%r",
             normalized,
             AUTHORIZED_SCAN_TARGETS,
         )
-
         return False, (
             f"target '{target}' has not been authorized for scanning. "
             f"Use /authorize {target} first."
         )
 
+    global_user_allowed = user_id in AUTHORIZED_SCAN_USERS
+    explicit_grant = (user_id, normalized) in AUTHORIZED_SCAN_GRANTS
+
+    if not global_user_allowed and not explicit_grant:
+        logger.warning(
+            "AUTHORIZATION FAILED | user=%s has no permission for target=%s",
+            user_id,
+            normalized,
+        )
+        return False, (
+            f"user_id={user_id} is not authorized to scan target '{normalized}'. "
+            f"An administrator must grant this user access."
+        )
+
+    authorization_source = (
+        "global_user_authorization"
+        if global_user_allowed
+        else "explicit_user_target_grant"
+    )
 
     logger.info(
-        "AUTHORIZATION SUCCESS | user=%s target=%s",
+        "AUTHORIZATION SUCCESS | user=%s target=%s source=%s",
         user_id,
         normalized,
+        authorization_source,
     )
 
     return True, (
-        f"authorized: user={user_id} target={normalized}"
+        f"authorized: user={user_id} target={normalized} "
+        f"source={authorization_source}"
     )

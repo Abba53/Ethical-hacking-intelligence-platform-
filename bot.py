@@ -14,7 +14,7 @@ import os
 import time
 
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import Update, BotCommand, BotCommandScopeDefault, BotCommandScopeChat
 from telegram.ext import Application, CommandHandler, ContextTypes
 from telegram.request import HTTPXRequest
 from collectors.rss_collector import collect_all_feeds, save_entries_to_db
@@ -23,7 +23,14 @@ from extractors.ioc_extractor import process_rss_entries
 from extractors.ioc_lookup import lookup_ioc
 from tools.blockchain_forensics import investigate_wallet
 from tools.network_security import investigate_network
-from services.active.auth import authorize_target, deauthorize_target, is_authorized
+from services.active.auth import (
+    authorize_target,
+    deauthorize_target,
+    grant_scan_access,
+    revoke_scan_access,
+    is_authorized,
+)
+from services.telegram_auth import is_telegram_admin, get_telegram_admin_users
 from services.active.recon_service import ReconService
 from services.active.network_scan_service import NetworkScanService
 from services.active.web_service import WebService
@@ -394,6 +401,10 @@ async def authorize_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     user = update.effective_user
     logger.info("Received /authorize from user_id=%s", user.id)
 
+    if not is_telegram_admin(user.id):
+        await update.message.reply_text("⛔ Admin authorization required.")
+        return
+
     if not context.args:
         await update.message.reply_text(
             "Usage: /authorize <target>\n"
@@ -416,6 +427,131 @@ async def authorize_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     else:
         await update.message.reply_text(
             f"ℹ️ Target already authorized: {target}"
+        )
+
+
+async def grantscan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles /grantscan <user_id> <target> — grants one user access to one target."""
+    user = update.effective_user
+    logger.info("Received /grantscan from user_id=%s", user.id)
+
+    if not is_telegram_admin(user.id):
+        await update.message.reply_text("⛔ Admin authorization required.")
+        return
+
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "Usage: /grantscan <user_id> <target>\n"
+            "Example:\n"
+            "  /grantscan 123456789 example.com\n\n"
+            "The target must already be globally authorized with /authorize."
+        )
+        return
+
+    try:
+        target_user_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text(
+            "❌ Invalid user ID. It must be a numeric Telegram user ID."
+        )
+        return
+
+    target = context.args[1].strip()
+
+    granted = grant_scan_access(
+        target_user_id,
+        target,
+        granted_by=user.id,
+    )
+
+    if granted:
+        await update.message.reply_text(
+            f"✅ Scan permission granted.\n"
+            f"User ID: {target_user_id}\n"
+            f"Target: {target}\n\n"
+            f"The user can now scan this target."
+        )
+    else:
+        await update.message.reply_text(
+            f"❌ Permission was not granted.\n"
+            f"Target must first be globally authorized with /authorize."
+        )
+
+
+async def revokescan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles /revokescan <user_id> <target> — revokes one specific grant."""
+    user = update.effective_user
+    logger.info("Received /revokescan from user_id=%s", user.id)
+
+    if not is_telegram_admin(user.id):
+        await update.message.reply_text("⛔ Admin authorization required.")
+        return
+
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "Usage: /revokescan <user_id> <target>\n"
+            "Example:\n"
+            "  /revokescan 123456789 example.com"
+        )
+        return
+
+    try:
+        target_user_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text(
+            "❌ Invalid user ID. It must be a numeric Telegram user ID."
+        )
+        return
+
+    target = context.args[1].strip()
+
+    revoked = revoke_scan_access(
+        target_user_id,
+        target,
+        revoked_by=user.id,
+    )
+
+    if revoked:
+        await update.message.reply_text(
+            f"✅ Scan permission revoked.\n"
+            f"User ID: {target_user_id}\n"
+            f"Target: {target}"
+        )
+    else:
+        await update.message.reply_text(
+            f"ℹ️ No scan grant found for user {target_user_id} on {target}."
+        )
+
+
+async def deauthorize_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles /deauthorize <target> — removes a target from active scan authorization."""
+    user = update.effective_user
+    logger.info("Received /deauthorize from user_id=%s", user.id)
+
+    if not is_telegram_admin(user.id):
+        await update.message.reply_text("⛔ Admin authorization required.")
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /deauthorize <target>\n"
+            "Examples:\n"
+            "  /deauthorize scanme.nmap.org\n"
+            "  /deauthorize https://mysite.com"
+        )
+        return
+
+    target = context.args[0].strip()
+    removed = deauthorize_target(target, authorized_by=user.id)
+
+    if removed:
+        await update.message.reply_text(
+            f"✅ Target deauthorized: {target}\n"
+            f"It can no longer be used for active scanning until re-authorized."
+        )
+    else:
+        await update.message.reply_text(
+            f"ℹ️ Target was not authorized: {target}"
         )
 
 
@@ -538,6 +674,10 @@ async def auditlog_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     """Handles /auditlog — shows recent security operation audit log."""
     user = update.effective_user
     logger.info("Received /auditlog from user_id=%s", user.id)
+
+    if not is_telegram_admin(user.id):
+        await update.message.reply_text("⛔ Admin authorization required.")
+        return
 
     from audit.audit_logger import read_recent_audit_logs
     logs = read_recent_audit_logs(limit=10)
@@ -1069,6 +1209,14 @@ async def fullreport_command(
 
     target = " ".join(context.args).strip()
 
+    authorized, reason = is_authorized(user.id, target)
+
+    if not authorized:
+        await update.message.reply_text(
+            f"⛔ Not authorized: {reason}"
+        )
+        return
+
     await update.message.reply_text(
         f"🔄 Queued full analysis on {target}.\n"
         "This can take a few minutes — I'll message you here when it's ready."
@@ -1185,6 +1333,50 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         )
 
 
+async def post_init(application):
+    normal_commands = [
+        BotCommand("start", "Start the platform"),
+        BotCommand("status", "Show platform status"),
+        BotCommand("feeds", "Threat intelligence feeds"),
+        BotCommand("threats", "Browse recent threats"),
+        BotCommand("topthreats", "Show top threats"),
+        BotCommand("extract", "Extract security indicators"),
+        BotCommand("lookup", "Look up an IOC"),
+        BotCommand("walletinfo", "Analyze a crypto wallet"),
+        BotCommand("netinfo", "Network intelligence"),
+        BotCommand("score", "Calculate threat score"),
+        BotCommand("aithreat", "AI threat analysis"),
+        BotCommand("aiscan", "AI scan analysis"),
+        BotCommand("ainetwork", "AI network analysis"),
+        BotCommand("aiweb", "AI web analysis"),
+        BotCommand("aimalware", "AI malware analysis"),
+        BotCommand("aiexecutive", "AI executive summary"),
+    ]
+
+    admin_commands = normal_commands + [
+        BotCommand("authorize", "Authorize a scan target"),
+        BotCommand("deauthorize", "Remove scan authorization"),
+        BotCommand("grantscan", "Grant user scan access"),
+        BotCommand("revokescan", "Revoke user scan access"),
+        BotCommand("scan", "Run a security scan"),
+        BotCommand("fullreport", "Run a full security assessment"),
+        BotCommand("auditlog", "View audit activity"),
+    ]
+
+    # Default menu for normal users.
+    await application.bot.set_my_commands(
+        normal_commands,
+        scope=BotCommandScopeDefault(),
+    )
+
+    # Administrator-specific menu.
+    for admin_user_id in get_telegram_admin_users():
+        await application.bot.set_my_commands(
+            admin_commands,
+            scope=BotCommandScopeChat(chat_id=admin_user_id),
+        )
+
+
 def main() -> None:
     if not BOT_TOKEN:
         raise RuntimeError(
@@ -1202,6 +1394,7 @@ def main() -> None:
         Application.builder()
         .token(BOT_TOKEN)
         .request(request)
+        .post_init(post_init)
         .build()
     )
 
@@ -1214,6 +1407,9 @@ def main() -> None:
     application.add_handler(CommandHandler("walletinfo", walletinfo_command))
     application.add_handler(CommandHandler("netinfo", netinfo_command))
     application.add_handler(CommandHandler("authorize", authorize_command))
+    application.add_handler(CommandHandler("deauthorize", deauthorize_command))
+    application.add_handler(CommandHandler("grantscan", grantscan_command))
+    application.add_handler(CommandHandler("revokescan", revokescan_command))
     application.add_handler(CommandHandler("scan", scan_command))
     application.add_handler(CommandHandler("auditlog", auditlog_command))
     application.add_handler(CommandHandler("score", score_command))
