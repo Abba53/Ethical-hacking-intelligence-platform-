@@ -20,7 +20,7 @@ import logging
 import os
 
 from dotenv import load_dotenv
-from services.active.target_utils import extract_hostname
+from services.active.target_utils import extract_hostname, validate_public_target
 
 logger = logging.getLogger(__name__)
 
@@ -304,6 +304,20 @@ def is_authorized(user_id: int, target: str) -> tuple[bool, str]:
         return False, (
             f"user_id={user_id} is not authorized to scan target '{normalized}'. "
             f"An administrator must grant this user access."
+        )
+
+    target_safe, safety_reason = validate_public_target(target)
+
+    if not target_safe:
+        logger.warning(
+            "TARGET SAFETY FAILED | user=%s target=%r reason=%s",
+            user_id,
+            target,
+            safety_reason,
+        )
+        return False, (
+            f"target '{target}' rejected by destination safety policy: "
+            f"{safety_reason}"
         )
 
     authorization_source = (
