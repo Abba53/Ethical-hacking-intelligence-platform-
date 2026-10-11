@@ -20,7 +20,7 @@ import os
 from contextlib import contextmanager
 
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from database.models import Base
@@ -33,7 +33,23 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///data/platform.db")
 
 # echo=False keeps SQLAlchemy quiet by default; flip to True temporarily
 # for deep debugging if you ever need to see every raw SQL statement.
-engine = create_engine(DATABASE_URL, echo=False)
+def _create_engine(database_url: str):
+    """Create a database engine with SQLite foreign keys enforced."""
+    db_engine = create_engine(database_url, echo=False)
+
+    if db_engine.dialect.name == "sqlite":
+        @event.listens_for(db_engine, "connect")
+        def _enable_sqlite_foreign_keys(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute("PRAGMA foreign_keys=ON")
+            finally:
+                cursor.close()
+
+    return db_engine
+
+
+engine = _create_engine(DATABASE_URL)
 
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
