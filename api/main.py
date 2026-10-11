@@ -7,6 +7,7 @@ FastAPI application entry point.
 import hashlib
 import time
 from collections import OrderedDict, deque
+from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 
@@ -18,6 +19,7 @@ from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.responses import JSONResponse
 
 from api.config import get_settings
+from database.db import init_db
 from api.routers import (
     ai_analysis,
     health,
@@ -83,12 +85,20 @@ def _enforce_rate_limit(request: Request, limit: int) -> bool:
     return True
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize missing database tables before serving requests."""
+    init_db()
+    yield
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
 
     app = FastAPI(
         title=settings.APP_NAME,
         version=settings.API_VERSION,
+        lifespan=lifespan,
     )
 
     if settings.FORCE_HTTPS:
