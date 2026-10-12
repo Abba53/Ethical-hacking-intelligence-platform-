@@ -233,135 +233,101 @@ def compute_score(ioc: ThreatFoxIOC) -> dict:
     }
 
 def process_unscored_iocs(limit: int = 100) -> dict:
-    """
-    Scores ThreatFox IOCs that do not yet have a score in ioc_scores.
+    """Score unscored ThreatFox IOCs with per-IOC transaction isolation."""
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+        raise ValueError("limit must be a positive integer")
 
-    Args:
-        limit: Maximum number of IOCs to process in one batch.
-
-    Returns:
-        Summary of scoring execution.
-    """
-
-    scored = 0
-    updated = 0
-    errors = 0
+    scored = updated = errors = 0
 
     with get_session() as session:
         try:
-            # Get already scored IOC values
-            scored_ioc_values = select(
-                IocScore.ioc_value
-            ).scalar_subquery()
-
-            # Fetch unscored IOCs
+            scored_ioc_values = select(IocScore.ioc_value)
             unscored = (
                 session.query(ThreatFoxIOC)
-                .filter(
-                    ~ThreatFoxIOC.ioc.in_(scored_ioc_values)
-                )
+                .filter(~ThreatFoxIOC.ioc.in_(scored_ioc_values))
+                .order_by(ThreatFoxIOC.ioc)
                 .limit(limit)
                 .all()
             )
 
             logger.info(
                 "Found %d unscored ThreatFox IOCs (limit=%d)",
-                len(unscored),
-                limit,
+                len(unscored), limit,
             )
 
-            if not unscored:
-                return {
-                    "scored": 0,
-                    "updated": 0,
-                    "errors": 0,
-                }
-
             for ioc in unscored:
+                ioc_type = ioc.ioc_type or "unknown"
                 try:
-                    result = compute_score(ioc)
-
-                    db_score = IocScore(
-                        ioc_value=ioc.ioc,
-                        ioc_type=ioc.ioc_type or "unknown",
-                        score=result["score"],
-                        severity=result["severity"],
-                        explanation=result["explanation"],
-                        signals=result["signals"],
-                    )
-
-                    session.add(db_score)
+                    with session.begin_nested():
+                        result = compute_score(ioc)
+                        session.add(IocScore(
+                            ioc_value=ioc.ioc,
+                            ioc_type=ioc_type,
+                            score=result["score"],
+                            severity=result["severity"],
+                            explanation=result["explanation"],
+                            signals=result["signals"],
+                        ))
+                        session.flush()
                     scored += 1
 
                 except IntegrityError:
-                    session.rollback()
-
                     existing = (
                         session.query(IocScore)
-                        .filter_by(ioc_value=ioc.ioc)
+                        .filter_by(ioc_value=ioc.ioc, ioc_type=ioc_type)
                         .first()
                     )
+                    if existing is None:
+                        errors += 1
+                        logger.warning(
+                            "IOC score conflict; matching record not found"
+                        )
+                        continue
 
-                    if existing:
-                        result = compute_score(ioc)
-
-                        existing.score = result["score"]
-                        existing.severity = result["severity"]
-                        existing.explanation = result["explanation"]
-                        existing.signals = result["signals"]
-                        existing.updated_at = datetime.now(timezone.utc)
-
+                    try:
+                        with session.begin_nested():
+                            result = compute_score(ioc)
+                            existing.score = result["score"]
+                            existing.severity = result["severity"]
+                            existing.explanation = result["explanation"]
+                            existing.signals = result["signals"]
+                            existing.updated_at = datetime.now(timezone.utc)
+                            session.flush()
                         updated += 1
+                    except Exception:
+                        errors += 1
+                        logger.exception("Failed to update existing IOC score")
 
-                except Exception as exc:
-                    session.rollback()
-
-                    logger.error(
-                        "Error scoring IOC %s: %s",
-                        ioc.ioc,
-                        exc,
-                    )
-
+                except Exception:
                     errors += 1
+                    logger.exception("Error scoring IOC (type=%s)", ioc_type)
 
             session.commit()
 
-        except Exception as exc:
+        except Exception:
             session.rollback()
-
-            logger.exception(
-                "Batch scoring failed: %s",
-                exc,
-            )
-
-            return {
-                "scored": scored,
-                "updated": updated,
-                "errors": errors + 1,
-            }
+            logger.exception("Batch scoring failed")
+            return {"scored": scored, "updated": updated, "errors": errors + 1}
 
     logger.info(
         "Scoring complete: %d scored, %d updated, %d errors",
-        scored,
-        updated,
-        errors,
+        scored, updated, errors,
     )
-
-    return {
-        "scored": scored,
-        "updated": updated,
-        "errors": errors,
-    }
+    return {"scored": scored, "updated": updated, "errors": errors}
 
 
 def process_all_unscored_iocs(batch_size: int = 100) -> dict:
-    total_scored = 0
-    total_updated = 0
-    total_errors = 0
+    if (
+        isinstance(batch_size, bool)
+        or not isinstance(batch_size, int)
+        or batch_size <= 0
+    ):
+        raise ValueError("batch_size must be a positive integer")
+
+    total_scored = total_updated = total_errors = 0
 
     while True:
         result = process_unscored_iocs(limit=batch_size)
-
         total_scored += result["scored"]
         total_updated += result["updated"]
         total_errors += result["errors"]
@@ -371,16 +337,14 @@ def process_all_unscored_iocs(batch_size: int = 100) -> dict:
 
     logger.info(
         "All IOC scoring complete: %d scored, %d updated, %d errors",
-        total_scored,
-        total_updated,
-        total_errors,
+        total_scored, total_updated, total_errors,
     )
-
     return {
         "scored": total_scored,
         "updated": total_updated,
         "errors": total_errors,
     }
+
 
 def get_top_threats(limit: int = 10, min_severity: str = "MEDIUM") -> list[dict]:
     """
