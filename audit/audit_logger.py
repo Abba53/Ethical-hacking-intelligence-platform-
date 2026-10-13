@@ -57,17 +57,15 @@ def log_operation(
     Records a security operation to the audit log.
 
     Args:
-        operation_type: 'passive_lookup' | 'active_scan' | 'collection' | 'extraction'
-        tool_name: name of the tool/service (e.g. 'abuseipdb', 'nmap', 'nuclei')
-        target: what was investigated (IP, domain, URL — NOT credentials)
-        user_id: Telegram user ID who triggered this operation
-        result_summary: human-readable outcome (e.g. '3 findings', 'clean', 'error: timeout')
-        duration_ms: how long the operation took in milliseconds
-        success: whether the operation completed without error
-        metadata: optional additional structured data (finding counts, severity, etc.)
+        operation_type: Type of security operation.
+        tool_name: Name of the tool or service.
+        target: Investigated IP, domain, or URL (not credentials).
+        user_id: Identity of the user who triggered the operation.
+        result_summary: Human-readable outcome.
+        duration_ms: Operation duration in milliseconds.
+        success: Whether the operation completed successfully.
+        metadata: Optional structured details.
     """
-    _ensure_audit_file()
-
     record = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "operation_type": operation_type,
@@ -80,15 +78,13 @@ def log_operation(
         "metadata": metadata or {},
     }
 
-    # Write to JSONL file
     try:
+        _ensure_audit_file()
         with open(AUDIT_LOG_PATH, "a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
-    except OSError as e:
-        # Never let audit logging failure crash the main operation
-        logger.error("Failed to write audit log: %s", e)
+    except OSError:
+        logger.exception("Failed to persist audit record")
 
-    # Also emit to the standard logger at INFO level
     logger.info(
         "AUDIT | %s | tool=%s | target=%s | user=%s | %s | %dms",
         operation_type,
@@ -151,25 +147,32 @@ class AuditTimer:
 
 def read_recent_audit_logs(limit: int = 20) -> list[dict]:
     """
-    Reads the most recent audit log entries.
-
-    Used by a future /auditlog bot command or FastAPI endpoint.
-    Returns entries in reverse chronological order (newest first).
+    Reads recent audit entries, newest first.
     """
-    if not AUDIT_LOG_PATH.exists():
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+        raise ValueError("limit must be a non-negative integer")
+
+    if limit == 0:
         return []
 
     try:
-        lines = AUDIT_LOG_PATH.read_text(encoding="utf-8").strip().splitlines()
+        if not AUDIT_LOG_PATH.exists():
+            return []
+
         records = []
-        for line in reversed(lines[-limit * 2:]):
+        for line in reversed(AUDIT_LOG_PATH.read_text(encoding="utf-8").splitlines()):
             try:
-                records.append(json.loads(line))
-                if len(records) >= limit:
-                    break
+                record = json.loads(line)
             except json.JSONDecodeError:
                 continue
+
+            if isinstance(record, dict):
+                records.append(record)
+
+            if len(records) >= limit:
+                break
+
         return records
-    except OSError as e:
-        logger.error("Failed to read audit log: %s", e)
+    except OSError:
+        logger.exception("Failed to read audit log")
         return []
