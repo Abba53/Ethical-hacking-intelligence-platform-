@@ -106,7 +106,9 @@ class Settings(BaseSettings):
         for item in raw.split(","):
             item = item.strip()
             if not item:
-                continue
+                raise ValueError(
+                    "Identity mappings must not contain empty entries."
+                )
 
             try:
                 user_id = int(item)
