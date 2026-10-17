@@ -88,3 +88,25 @@ def test_run_subprocess_timeout_with_partial_stdout():
     assert isinstance(stdout, str)
     assert isinstance(stderr, str)
     assert "timeout after 1s" in stderr
+
+
+def test_run_subprocess_does_not_execute_shell_metacharacters():
+    payload = "literal; touch /tmp/cti_shell_injection_probe"
+
+    returncode, stdout, stderr = asyncio.run(
+        run_subprocess(
+            [
+                sys.executable,
+                "-c",
+                "import sys; print(sys.argv[1])",
+                payload,
+            ],
+            timeout=5,
+        )
+    )
+
+    import os
+    assert returncode == 0
+    assert stdout == payload
+    assert not os.path.exists("/tmp/cti_shell_injection_probe")
+    assert not os.path.exists("/tmp/cti_shell_injection_probe")
