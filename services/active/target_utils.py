@@ -87,13 +87,24 @@ def validate_target_syntax(target: str) -> tuple[bool, str]:
         return False, "target contains forbidden control characters"
 
     if "://" in target:
-        parsed = urlparse(target)
+        try:
+            parsed = urlparse(target)
 
-        if parsed.scheme.lower() not in {"http", "https"}:
-            return False, "only http and https targets are allowed"
+            if parsed.scheme.lower() not in {"http", "https"}:
+                return False, "only http and https targets are allowed"
 
-        if not parsed.hostname:
-            return False, "target URL has no hostname"
+            if not parsed.netloc or not parsed.hostname:
+                return False, "target URL has no hostname"
+
+            if parsed.username is not None or parsed.password is not None:
+                return False, "target URL must not contain credentials"
+
+            port = parsed.port
+            if port is not None and not 1 <= port <= 65535:
+                return False, "target URL has an invalid port"
+
+        except ValueError:
+            return False, "target URL is malformed"
 
         return True, "valid"
 
