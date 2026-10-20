@@ -57,7 +57,7 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 def init_db() -> None:
     """Creates all tables defined in models.py if they don't already exist."""
     Base.metadata.create_all(engine)
-    logger.info("Database initialized at %s", DATABASE_URL)
+    logger.info("Database initialized successfully (dialect=%s)", engine.dialect.name)
 
 
 @contextmanager
@@ -88,4 +88,4 @@ if __name__ == "__main__":
         level=logging.INFO,
     )
     init_db()
-    print(f"\n✅ Database ready at: {DATABASE_URL}")
+    print(f"\n✅ Database ready (dialect: {engine.dialect.name})")
