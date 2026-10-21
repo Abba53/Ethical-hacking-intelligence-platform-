@@ -17,6 +17,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.responses import JSONResponse
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from api.config import get_settings
 from database.db import init_db
@@ -152,6 +153,12 @@ def create_app() -> FastAPI:
     app.include_router(reports.router)
     app.include_router(scans.router)
     app.include_router(lookups.router)
+
+    if settings.TRUST_PROXY_HEADERS:
+        return ProxyHeadersMiddleware(
+            app,
+            trusted_hosts=settings.trusted_proxy_host_list,
+        )
 
     return app
 

@@ -2,7 +2,19 @@
 Regression tests for per-user/per-target active-scan grants.
 """
 
+import pytest
+
 import services.active.auth as active_auth
+import services.active.target_utils as target_utils
+
+
+@pytest.fixture(autouse=True)
+def mock_public_dns(monkeypatch):
+    monkeypatch.setattr(
+        target_utils,
+        "_resolve_addresses",
+        lambda hostname: {"93.184.216.34"},
+    )
 
 
 def setup_function():

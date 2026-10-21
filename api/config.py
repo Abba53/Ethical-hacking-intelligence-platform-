@@ -13,6 +13,7 @@ Rules carried over from the platform spec (Section 25):
 
 from __future__ import annotations
 
+import ipaddress
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -55,6 +56,7 @@ class Settings(BaseSettings):
     TLS_KEYFILE: str = Field(default="")
     FORCE_HTTPS: bool = False
     TRUST_PROXY_HEADERS: bool = False
+    TRUSTED_PROXY_HOSTS: str = "127.0.0.1"
 
     # --- Database (Phase 6/7 SQLite layer) ---
     DATABASE_URL: str = "sqlite:///data/platform.db"
@@ -163,6 +165,10 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
 
     @property
+    def trusted_proxy_host_list(self) -> list[str]:
+        return [host.strip() for host in self.TRUSTED_PROXY_HOSTS.split(",") if host.strip()]
+
+    @property
     def is_production(self) -> bool:
         return self.APP_ENV == "production"
 
@@ -181,6 +187,23 @@ def get_settings() -> Settings:
             "Refusing to start in production with no API_KEYS configured. "
             "Set API_KEYS in your environment/.env."
         )
+    if settings.TRUST_PROXY_HEADERS:
+        hosts = settings.trusted_proxy_host_list
+        if not hosts or "*" in hosts:
+            raise RuntimeError(
+                "Trusted proxy hosts must be explicit IP addresses or CIDR networks."
+            )
+        try:
+            for host in hosts:
+                if "/" in host:
+                    ipaddress.ip_network(host, strict=False)
+                else:
+                    ipaddress.ip_address(host)
+        except ValueError:
+            raise RuntimeError(
+                "Trusted proxy hosts must be valid IP addresses or CIDR networks."
+            ) from None
+
     if settings.FORCE_HTTPS and not settings.tls_enabled_directly and not settings.TRUST_PROXY_HEADERS:
         raise RuntimeError(
             "FORCE_HTTPS=true but neither TLS_CERTFILE/TLS_KEYFILE (direct TLS) "
