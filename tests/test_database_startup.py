@@ -31,3 +31,23 @@ def test_api_startup_initializes_tables_in_temporary_database(
         }.issubset(tables)
     finally:
         test_engine.dispose()
+
+
+def test_api_startup_fails_when_database_initialization_fails(monkeypatch):
+    def fail_database_initialization():
+        raise RuntimeError("simulated database initialization failure")
+
+    monkeypatch.setattr(
+        "api.main.init_db",
+        fail_database_initialization,
+    )
+
+    try:
+        with TestClient(create_app()) as client:
+            client.get("/health")
+    except RuntimeError as exc:
+        assert str(exc) == "simulated database initialization failure"
+    else:
+        raise AssertionError(
+            "Application startup should fail when database initialization fails"
+        )
