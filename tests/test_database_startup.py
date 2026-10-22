@@ -51,3 +51,22 @@ def test_api_startup_fails_when_database_initialization_fails(monkeypatch):
         raise AssertionError(
             "Application startup should fail when database initialization fails"
         )
+
+
+def test_api_shutdown_disposes_database_engine(monkeypatch):
+    class TrackingEngine:
+        def __init__(self):
+            self.dispose_called = False
+
+        def dispose(self):
+            self.dispose_called = True
+
+    tracking_engine = TrackingEngine()
+
+    monkeypatch.setattr(db, "engine", tracking_engine)
+    monkeypatch.setattr("api.main.init_db", lambda: None)
+
+    with TestClient(create_app()):
+        assert tracking_engine.dispose_called is False
+
+    assert tracking_engine.dispose_called is True

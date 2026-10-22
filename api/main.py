@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from api.config import get_settings
+from database import db
 from database.db import init_db
 from api.routers import (
     ai_analysis,
@@ -88,9 +89,12 @@ def _enforce_rate_limit(request: Request, limit: int) -> bool:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize missing database tables before serving requests."""
+    """Initialize the database and release its connections at shutdown."""
     init_db()
-    yield
+    try:
+        yield
+    finally:
+        db.engine.dispose()
 
 
 def create_app() -> FastAPI:
