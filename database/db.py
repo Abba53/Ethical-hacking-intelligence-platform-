@@ -17,6 +17,7 @@ Design notes:
 
 import logging
 import os
+from pathlib import Path
 from contextlib import contextmanager
 
 from dotenv import load_dotenv
@@ -35,6 +36,13 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///data/platform.db")
 # for deep debugging if you ever need to see every raw SQL statement.
 def _create_engine(database_url: str):
     """Create a database engine with SQLite foreign keys enforced."""
+    if database_url.startswith("sqlite:///") and not database_url.startswith(
+        "sqlite:///:memory:"
+    ):
+        database_path = database_url.removeprefix("sqlite:///").split("?", 1)[0]
+        if database_path and database_path != ":memory:":
+            Path(database_path).parent.mkdir(parents=True, exist_ok=True)
+
     db_engine = create_engine(database_url, echo=False)
 
     if db_engine.dialect.name == "sqlite":
