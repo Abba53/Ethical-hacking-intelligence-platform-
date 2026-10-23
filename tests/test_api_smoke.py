@@ -191,6 +191,41 @@ def test_scans_uses_authenticated_api_identity(monkeypatch):
 # stacking bug found and fixed this session.
 # ---------------------------------------------------------------------------
 
+
+
+def test_active_scan_hourly_rate_limit_returns_429(monkeypatch):
+    import api.routers.scans as scans_router
+
+    # Isolate this test from requests made by other tests.
+    monkeypatch.setattr(scans_router, "_active_scan_requests", {})
+    monkeypatch.setattr(settings, "RATE_LIMIT_ACTIVE_SCAN_PER_HOUR", 1)
+
+    dispatch_calls = []
+
+    async def fake_dispatch(payload, user_id):
+        dispatch_calls.append(user_id)
+        return {"success": True, "data": {}, "summary": "quota-test"}
+
+    monkeypatch.setattr(scans_router, "_dispatch", fake_dispatch)
+
+    payload = {
+        "target": "example.com",
+        "scan_type": "network_scan",
+        "action": "quick",
+    }
+
+    first = client.post("/api/v1/scans", json=payload, headers=AUTH_HEADERS)
+    second = client.post("/api/v1/scans", json=payload, headers=AUTH_HEADERS)
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+    assert second.json()["detail"] == (
+        "Hourly active-scan quota exceeded. Try again later."
+    )
+    assert "Retry-After" in second.headers
+    assert len(dispatch_calls) == 1
+
+
 def test_authorize_requires_auth():
     response = client.post("/api/v1/scans/authorize", json={})
     assert response.status_code == 403  # require_admin_key's own missing-header code

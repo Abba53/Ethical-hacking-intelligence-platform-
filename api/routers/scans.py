@@ -51,6 +51,9 @@ Security model
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
+from collections import deque
 import logging
 from typing import Any
 from urllib.parse import urlparse
@@ -64,6 +67,7 @@ from api.schemas.scan import (
     ScanResultOut,
     ScanType,
 )
+from api.config import get_settings
 from api.security import require_admin_key_identity, require_api_key_identity
 
 logger = logging.getLogger(__name__)
@@ -78,6 +82,62 @@ router = APIRouter(prefix="/api/v1/scans", tags=["scans"] )
 
 MAX_CONCURRENT_SCANS = 3
 _scan_semaphore = asyncio.Semaphore(MAX_CONCURRENT_SCANS)
+
+# ---------------------------------------------------------------------------
+# Per-user active-scan quota using a rolling 60-minute window.
+# Process-local only; use shared storage for multi-worker deployments.
+# ---------------------------------------------------------------------------
+_ACTIVE_SCAN_WINDOW_SECONDS = 3600
+_MAX_RATE_LIMIT_USERS = 10000
+_active_scan_requests: dict[int, deque[float]] = {}
+_active_scan_rate_lock = threading.Lock()
+
+
+def _enforce_active_scan_rate_limit(user_id: int) -> None:
+    limit = get_settings().RATE_LIMIT_ACTIVE_SCAN_PER_HOUR
+
+    # A non-positive limit disables this quota.
+    if limit <= 0:
+        return
+
+    now = time.monotonic()
+    cutoff = now - _ACTIVE_SCAN_WINDOW_SECONDS
+
+    with _active_scan_rate_lock:
+        # Remove expired requests and empty user buckets.
+        for existing_user in list(_active_scan_requests):
+            bucket = _active_scan_requests[existing_user]
+            while bucket and bucket[0] <= cutoff:
+                bucket.popleft()
+            if not bucket:
+                del _active_scan_requests[existing_user]
+
+        bucket = _active_scan_requests.get(user_id)
+
+        if bucket is None:
+            # Fail closed rather than evicting an active user's quota.
+            if len(_active_scan_requests) >= _MAX_RATE_LIMIT_USERS:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Scan rate limiter is at capacity. Try again later.",
+                    headers={"Retry-After": str(_ACTIVE_SCAN_WINDOW_SECONDS)},
+                )
+            bucket = deque()
+            _active_scan_requests[user_id] = bucket
+
+        if len(bucket) >= limit:
+            retry_after = max(
+                1,
+                int(bucket[0] + _ACTIVE_SCAN_WINDOW_SECONDS - now),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Hourly active-scan quota exceeded. Try again later.",
+                headers={"Retry-After": str(retry_after)},
+            )
+
+        bucket.append(now)
+
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +322,8 @@ async def submit_scan(
     real service decides whether it actually executes — a denial is a
     normal 200 response with success=False, not an HTTP error.
     """
+    _enforce_active_scan_rate_limit(user_id)
+
     try:
         async with _scan_semaphore:
             result = await _dispatch(payload, user_id)
