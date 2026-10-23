@@ -187,6 +187,12 @@ def get_settings() -> Settings:
             "Refusing to start in production with no API_KEYS configured. "
             "Set API_KEYS in your environment/.env."
         )
+    if settings.is_production and not settings.FORCE_HTTPS:
+        raise RuntimeError(
+            "Refusing to start in production with FORCE_HTTPS=false. "
+            "Set FORCE_HTTPS=true and configure direct TLS or a trusted "
+            "TLS-terminating proxy."
+        )
     if settings.TRUST_PROXY_HEADERS:
         hosts = settings.trusted_proxy_host_list
         if not hosts or "*" in hosts:

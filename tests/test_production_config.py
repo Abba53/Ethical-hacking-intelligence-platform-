@@ -20,13 +20,32 @@ def test_production_requires_api_keys(monkeypatch):
 def test_production_accepts_api_keys(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("API_KEYS", "production-test-key")
-    monkeypatch.setenv("FORCE_HTTPS", "false")
+    monkeypatch.setenv("FORCE_HTTPS", "true")
+    monkeypatch.setenv("TLS_CERTFILE", "")
+    monkeypatch.setenv("TLS_KEYFILE", "")
+    monkeypatch.setenv("TRUST_PROXY_HEADERS", "true")
+    monkeypatch.setenv("TRUSTED_PROXY_HOSTS", "127.0.0.1")
     get_settings.cache_clear()
 
     try:
         settings = get_settings()
         assert settings.is_production
+        assert settings.FORCE_HTTPS is True
         assert "production-test-key" in settings.api_key_set
+    finally:
+        get_settings.cache_clear()
+
+
+def test_production_requires_https_enforcement(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("API_KEYS", "production-test-key")
+    monkeypatch.setenv("FORCE_HTTPS", "false")
+    monkeypatch.setenv("TRUST_PROXY_HEADERS", "false")
+    get_settings.cache_clear()
+
+    try:
+        with pytest.raises(RuntimeError, match="FORCE_HTTPS=true"):
+            get_settings()
     finally:
         get_settings.cache_clear()
 

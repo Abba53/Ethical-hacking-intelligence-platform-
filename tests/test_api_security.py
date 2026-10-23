@@ -74,7 +74,9 @@ def test_per_client_rate_limit_returns_429():
         settings.RATE_LIMIT_PER_MINUTE = 1
         _rate_buckets.clear()
 
-        client = TestClient(app)
+        # Build an application using the settings object modified above.
+        test_app = create_app()
+        client = TestClient(test_app)
         headers = {"X-API-Key": "rate-limit-test-key"}
 
         first = client.get("/health", headers=headers)
