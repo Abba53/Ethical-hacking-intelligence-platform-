@@ -63,9 +63,9 @@ async def run_subprocess(
 
         except asyncio.TimeoutError:
             logger.warning(
-                "Subprocess timed out after %ss: %s",
+                "Subprocess timed out after %ss (executable=%s)",
                 timeout,
-                " ".join(cmd[:3]),
+                cmd[0],
             )
 
             # The communicate() coroutine may have been cancelled by
@@ -90,8 +90,8 @@ async def run_subprocess(
 
             except asyncio.TimeoutError:
                 logger.warning(
-                    "Subprocess did not terminate gracefully; killing: %s",
-                    " ".join(cmd[:3]),
+                    "Subprocess did not terminate gracefully; killing executable=%s",
+                    cmd[0],
                 )
 
                 try:
@@ -143,8 +143,8 @@ async def run_subprocess(
 
     except Exception as exc:
         logger.exception(
-            "Subprocess execution error: %s",
-            " ".join(cmd[:3]),
+            "Subprocess execution error (executable=%s)",
+            cmd[0],
         )
 
         if proc is not None:
