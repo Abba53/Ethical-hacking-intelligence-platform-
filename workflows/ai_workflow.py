@@ -93,19 +93,17 @@ class AIWorkflow(BaseWorkflow):
             response = await handler(**kwargs)
 
         except Exception as exc:
-            logger.exception(
-                "AI handler raised exception | report_type=%s | error=%s",
+            logger.error(
+                "AI handler raised exception | report_type=%s | error_type=%s",
                 report_type,
-                exc,
+                type(exc).__name__,
             )
 
             return WorkflowResult(
                 success=False,
                 workflow=self.workflow_name,
-                message=f"AI analysis failed: {type(exc).__name__}: {exc}",
-                errors=[
-                    f"{type(exc).__name__}: {exc}"
-                ],
+                message="AI analysis failed due to an internal provider error.",
+                errors=["AI provider execution failed."],
             )
 
         if response is None:
@@ -130,20 +128,16 @@ class AIWorkflow(BaseWorkflow):
         )
 
         if not response.success:
-            error = response.error or "Unknown AI provider error"
-
             logger.error(
-                "AI analysis failed | report_type=%s | error=%s",
+                "AI analysis failed | report_type=%s",
                 report_type,
-                error,
             )
 
             return WorkflowResult(
                 success=False,
                 workflow=self.workflow_name,
-                message=error,
-                data={"response": response},
-                errors=[error],
+                message="AI analysis failed. The provider returned an error.",
+                errors=["AI provider returned an unsuccessful response."],
             )
 
         return WorkflowResult(
