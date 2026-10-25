@@ -58,7 +58,7 @@ class BaseWorkflow(ABC):
                 success=False,
                 workflow=self.workflow_name,
                 message="Workflow failed.",
-                errors=[str(exc)],
+                errors=["Workflow execution failed."],
                 started_at=start,
                 finished_at=end,
                 duration_ms=(end - start).total_seconds() * 1000,
