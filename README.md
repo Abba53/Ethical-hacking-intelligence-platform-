@@ -8,29 +8,21 @@ The project is being developed incrementally through multiple phases, with a str
 
 # Current Status
 
-**Current Phase:** Phase 11 — AI Analysis
+**Current Phase:** Phase 13 — Production Readiness Verification
 
 Completed:
+- Phases 1–10: Core platform foundations
+- Phase 12: FastAPI backend implementation
 
-- ✅ Phase 1 — Project Setup
-- ✅ Phase 2 — Git & GitHub
-- ✅ Phase 3 — Python Foundations
-- ✅ Phase 4 — Telegram Bot
-- ✅ Phase 5 — RSS Threat Intelligence Collection
-- ✅ Phase 6 — Threat Feed Collection
-- ✅ Phase 7 — SQLite Database Layer
-- ✅ Phase 8 — IOC Extraction Engine
-- ✅ Phase 9 — Security Tool Integration
-- ✅ Phase 10 — Threat Scoring Engine
-- 🚧 Phase 11 — AI Analysis (in progress)
+In progress:
+- Phase 11: AI analysis verification
+- Phase 13: Production readiness verification
 
 Upcoming:
+- Web dashboard
+- Mobile applications
+- Production deployment verification
 
-- Phase 12 — FastAPI Backend
-- Phase 13 — Web Dashboard
-- Phase 14 — Authentication & RBAC
-- Phase 15 — Mobile Applications
-- Phase 16 — Production Deployment
 
 ---
 
@@ -264,24 +256,25 @@ Database
 
 # Roadmap
 
-- ✅ Project Setup
-- ✅ Git & GitHub
-- ✅ Python Foundations
-- ✅ Telegram Bot
-- ✅ RSS Collection
-- ✅ Threat Feed Collection
-- ✅ Database Layer
-- ✅ IOC Extraction
-- ✅ Security Services
-- ✅ Threat Scoring
-- 🚧 AI Analysis
-- ⏳ FastAPI Backend
-- ⏳ Web Dashboard
-- ⏳ Authentication & RBAC
-- ⏳ Mobile Applications
-- ⏳ Production Deployment
+- Completed: Project setup, Python foundations, Telegram bot,
+  threat intelligence collection, database, IOC extraction,
+  security services, and threat scoring
+- In progress: AI analysis verification
+- Completed implementation: FastAPI backend
+- In progress: Production readiness verification
+- Upcoming: Web dashboard, mobile applications, production deployment
 
 ---
+
+# API Server: Local Development
+
+## Start the API
+
+Run from the project root:
+
+```bash
+./venv/bin/python -m api.server
+```
 
 # License
 
