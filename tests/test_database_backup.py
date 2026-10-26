@@ -8,6 +8,7 @@ from database.backup import (
     backup_database,
     integrity_check,
     resolve_sqlite_path,
+    restore_database,
 )
 
 
@@ -100,6 +101,76 @@ def test_backup_contains_independent_copy(tmp_path):
         connection.close()
 
     connection = sqlite3.connect(backup)
+    try:
+        assert connection.execute(
+            "SELECT value FROM sample WHERE id = 1"
+        ).fetchone() == ("backup-test",)
+    finally:
+        connection.close()
+
+
+def test_restore_preserves_data_and_passes_integrity_check(tmp_path):
+    source = tmp_path / "source.db"
+    create_database(source)
+    backup = backup_database(
+        f"sqlite:///{source}", tmp_path / "backups"
+    )
+    destination = tmp_path / "restored.db"
+
+    result = restore_database(backup, destination)
+
+    assert result == destination.resolve()
+    integrity_check(result)
+    connection = sqlite3.connect(result)
+    try:
+        assert connection.execute(
+            "SELECT value FROM sample WHERE id = 1"
+        ).fetchone() == ("backup-test",)
+    finally:
+        connection.close()
+
+
+def test_restore_rejects_missing_backup(tmp_path):
+    destination = tmp_path / "restored.db"
+    with pytest.raises(FileNotFoundError):
+        restore_database(tmp_path / "missing.db", destination)
+    assert not destination.exists()
+
+
+def test_restore_rejects_corrupt_backup(tmp_path):
+    backup = tmp_path / "corrupt.db"
+    backup.write_bytes(b"this is not a valid SQLite database")
+    destination = tmp_path / "restored.db"
+
+    with pytest.raises((sqlite3.DatabaseError, RuntimeError)):
+        restore_database(backup, destination)
+
+    assert not destination.exists()
+
+
+def test_restore_refuses_to_overwrite_existing_destination(tmp_path):
+    source = tmp_path / "source.db"
+    create_database(source)
+    backup = backup_database(
+        f"sqlite:///{source}", tmp_path / "backups"
+    )
+    destination = tmp_path / "existing.db"
+    destination.write_text("preserve this file")
+
+    with pytest.raises(FileExistsError):
+        restore_database(backup, destination)
+
+    assert destination.read_text() == "preserve this file"
+
+
+def test_restore_rejects_same_source_and_destination(tmp_path):
+    source = tmp_path / "source.db"
+    create_database(source)
+
+    with pytest.raises(ValueError, match="different files"):
+        restore_database(source, source)
+
+    connection = sqlite3.connect(source)
     try:
         assert connection.execute(
             "SELECT value FROM sample WHERE id = 1"

@@ -74,12 +74,54 @@ def backup_database(database_url: str, backup_dir: Path = DEFAULT_BACKUP_DIR) ->
         source.close()
 
 
+
+def restore_database(backup_path: Path, destination_path: Path) -> Path:
+    """Restore a verified backup to a new file without overwriting data."""
+    backup = Path(backup_path).expanduser().resolve()
+    destination = Path(destination_path).expanduser().resolve()
+
+    if backup == destination:
+        raise ValueError("Backup and destination must be different files.")
+    if not backup.is_file():
+        raise FileNotFoundError(f"Backup file not found: {backup}")
+    if destination.exists():
+        raise FileExistsError(f"Destination already exists: {destination}")
+
+    integrity_check(backup)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    source = sqlite3.connect(
+        f"{backup.as_uri()}?mode=ro", uri=True, timeout=30
+    )
+    target = None
+    try:
+        target = sqlite3.connect(destination, timeout=30)
+        source.backup(target)
+        target.close()
+        target = None
+        try:
+            destination.chmod(0o600)
+        except OSError:
+            pass
+        integrity_check(destination)
+        return destination
+    except Exception:
+        if target is not None:
+            target.close()
+        destination.unlink(missing_ok=True)
+        raise
+    finally:
+        source.close()
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Create or verify a SQLite backup.")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("backup")
     verify_parser = commands.add_parser("verify")
     verify_parser.add_argument("path", type=Path)
+    restore_parser = commands.add_parser("restore")
+    restore_parser.add_argument("backup_path", type=Path)
+    restore_parser.add_argument("destination_path", type=Path)
     args = parser.parse_args()
     try:
         if args.command == "backup":
@@ -87,10 +129,16 @@ def main() -> int:
             destination = backup_database(DATABASE_URL)
             print("Backup created and verified.")
             print(f"File: {destination}")
-        else:
+        elif args.command == "verify":
             integrity_check(args.path)
             print("Integrity check passed.")
             print(f"File: {args.path.resolve()}")
+        else:
+            destination = restore_database(
+                args.backup_path, args.destination_path
+            )
+            print("Database restored and verified.")
+            print(f"File: {destination}")
         return 0
     except Exception as exc:
         print(f"Backup operation failed: {exc}", file=sys.stderr)
