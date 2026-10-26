@@ -27,3 +27,6 @@ reports/__pycache__/
 reports/output/
 __pycache__/
 certs/
+
+# Database backups — never commit backup data
+backups/
