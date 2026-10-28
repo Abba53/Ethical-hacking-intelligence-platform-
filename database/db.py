@@ -62,9 +62,46 @@ engine = _create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 
+def _upgrade_sqlite_indexes(db_engine) -> None:
+    """Create performance indexes safely on existing SQLite databases."""
+    if db_engine.dialect.name != "sqlite":
+        return
+
+    indexes = (
+        "CREATE INDEX IF NOT EXISTS ix_rss_entries_collected_at "
+        "ON rss_entries (collected_at)",
+        "CREATE INDEX IF NOT EXISTS ix_extracted_iocs_extracted_at "
+        "ON extracted_iocs (extracted_at)",
+        "CREATE INDEX IF NOT EXISTS ix_extracted_iocs_source_entry_id "
+        "ON extracted_iocs (source_entry_id)",
+        "CREATE INDEX IF NOT EXISTS ix_ioc_scores_score "
+        "ON ioc_scores (score)",
+    )
+
+    with db_engine.begin() as connection:
+        existing_tables = set(
+            connection.exec_driver_sql(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).scalars()
+        )
+        required_tables = {
+            "rss_entries",
+            "extracted_iocs",
+            "ioc_scores",
+        }
+        if not required_tables.issubset(existing_tables):
+            raise RuntimeError(
+                "Cannot upgrade database indexes: required tables are missing"
+            )
+
+        for statement in indexes:
+            connection.exec_driver_sql(statement)
+
+
 def init_db() -> None:
-    """Creates all tables defined in models.py if they don't already exist."""
+    """Create tables and apply safe, repeatable SQLite index upgrades."""
     Base.metadata.create_all(engine)
+    _upgrade_sqlite_indexes(engine)
     logger.info("Database initialized successfully (dialect=%s)", engine.dialect.name)
 
 
